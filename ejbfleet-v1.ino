@@ -173,6 +173,10 @@ void SetSpeedRight(int speed)
         Pause mode (modePause) is entered from run mode. The motors stop, the red light flashes for .5 seconds on
         and .5 seconds off for 3 seconds, then goes back run mode.
 
+        For transitions between modes, there is a function for each type of transition; standby to run, run to pause, 
+        run to standby, pause to run, pause to standby. These are called in the main loop when a mode needs to change,
+        and they provide a place for any action that needs to take place just once during a transition.
+         
         Mode state variable and constants...
 */
 int mode;
@@ -186,7 +190,7 @@ const int modePause = 4;      //pause mode for crosswalk stops while in run mode
 */
 
 // This function makes the transition to test mode, which does nothing but activate all of the LEDs at this point.
-void StartModeTest()
+void ModeStartToTest()
 {
     mode = modeTest;
     runLed.Enable();
@@ -194,10 +198,9 @@ void StartModeTest()
     digitalWrite(ledPortYellow, ledOn);
 }
 
-// These functiona make the transition to standby mode, setting the mode state variable to standby,
-// turning off all flashing LEDs and lighting the standby LED. Then it stops the motors.
+// Mode transition from start to standby. This is normally the starting mode.
 
-void StartModeStandby()
+void ModeStartToStandby()
 {
     mode = modeStandby;
     runLed.Disable();
@@ -206,12 +209,24 @@ void StartModeStandby()
     // stop motors
     SetSpeedRight(0);
     SetSpeedLeft (0);
+
 }
 
+// Mode transition from run to standby
 void ModeRunToStandby()
 {
     mode = modeStandby;
     runLed.Disable();
+    digitalWrite(ledPortYellow, ledOn);
+    // stop motors
+    SetSpeedRight(0);
+    SetSpeedLeft (0);
+}
+
+// Mode transition from pause to standby
+void ModePauseToStandby()
+{
+    mode = modeStandby;
     pauseLed.Disable();
     digitalWrite(ledPortYellow, ledOn);
     // stop motors
@@ -219,40 +234,38 @@ void ModeRunToStandby()
     SetSpeedLeft (0);
 }
 
-// This function makes the transition to run mode, setting the mode state variable to run, turning off the
-// standby LED, disbling the pause flasher, and starting the run flasher. TEMPORARY: It also starts the crosswalk timer to
-// disable looking for crosswalks for a couple of seconds.
-// This function make the transition to pause mode, setting up the LEDs for the mode, stopping the motors, and starting
-// the pause mode timer to three seconds. The timer will be polled in the main loop pause code.
+// Mode transition from standby to run
 
-/*
-void EnterModePause()
+void ModeStandbyToRun()
 {
-    mode = modePause;
-    runLed.Disable();
-    pauseLed.Enable();
+    mode = modeRun;
+    runLed.Enable();
     digitalWrite(ledPortYellow, ledOff);
-
-    // stop motors
-    SetSpeedRight(0);
-    SetSpeedLeft (0);
-
-    // Pause mode is 3 seconds long. Start timer.
-    pauseTimer.Start(3000); // set timer to 3 seconds
 }
-*/
+
+// Mode transition from pause to run
+void ModePauseToRun()
+{
+    mode = modeRun;
+    runLed.Enable();
+    pauseLed.Disable();
+    crossWalkTimer.Start(2000); //wait 2 seconds before looking for a cross walk again
+}
+
+// Mode transition from run to pause
 void ModeRunToPause()
 {
     mode = modePause;
     runLed.Disable();
     pauseLed.Enable();
-    digitalWrite(ledPortYellow, ledOff);
 
     // stop motors
     SetSpeedRight(0);
     SetSpeedLeft (0);
 
-    // Pause mode is 3 seconds long. Start timer.
+    // Pause mode is 3 seconds long. Start timer. The timer will be polled during pause
+    // mode in the main loop until the 3 seconds is past, then the transition back to 
+    // run mode will happen.
     pauseTimer.Start(3000); // set timer to 3 seconds
 }
 
@@ -302,11 +315,12 @@ void setup()
     //
     if (buttonReader.Sample() == pressed)
     {
-        StartModeTest();
+        //        EnterModeTest();
+        ModeStartToStandby();
     }
     else
     {
-        StartModeStandby();
+        ModeStartToStandby();
     }
 }
 
@@ -455,9 +469,8 @@ void loop()
         // move on past the black line that triggered the switch into pause mode. We test that timer
         // here until it expires, then re enable the cross walk test.
         //
-        boolean resumeCrossWalkTest = crossWalkTimer.Test();   //poll the cross walk timer
-
-        if (resumeCrossWalkTest)
+        boolean finishedCrossWalkDelay = crossWalkTimer.Test();   //poll the cross walk timer
+        if (finishedCrossWalkDelay)
         {
             if (digSensorValMiddle == dark)
             {
@@ -524,7 +537,7 @@ void loop()
         boolean pauseDone = pauseTimer.Test();   //poll the pause timer
         if (pauseDone)
         {
-            EnterModeRun();
+            ModePauseToRun();
             Serial.println("pause to run");
         }
         //
@@ -534,7 +547,7 @@ void loop()
         if (buttonReader.CheckCycle())      // when the button is pressed and released, we go to standby mode
         {
             Serial.println("pause to standby");
-            EnterModeStandby();
+            ModePauseToStandby();
         }
     } // end of  pause
 } // end of loop()

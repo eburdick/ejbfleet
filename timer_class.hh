@@ -23,7 +23,7 @@ class Timer
 
         long endTime;              // caller specified end time
         long startTime;            // snapshot of when timer was started
-        boolean endTimeExists;     // true if timer started with an end time
+        boolean endTimeExists;     // true iff timer started with an end time
 
         // Constructor
     public:
