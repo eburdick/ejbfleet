@@ -4,6 +4,7 @@
         Timer::Timer (void)
         {
             endTimeExists = false;
+            endTime = 0; // for testing a timer that hasn't been started yet.
         }
         void Timer::Start(void)
         {

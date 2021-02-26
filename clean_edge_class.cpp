@@ -149,7 +149,6 @@ boolean CleanEdge::CheckCycle()
         else
         {
             waitingForInitialState = false;
-            Serial.println("entering initial state");
         }
     }
     // Initial state is correct. Look for the two transitions.

@@ -39,7 +39,7 @@ const int ledOff = HIGH;
 
 // IR line sensor port definitions
 const int digLineSensorPortRight = 53;
-const int digLineSensorPortMiddle = 51;
+
 const int digLineSensorPortLeft = 49;
 const int digLineSensorPortRightOuter = 47;
 const int digLineSensorPortLeftOuter = 45;
@@ -83,8 +83,20 @@ BlinkLed pauseLed(ledPortRed, 500, 500);   //one half second on, one half second
 // create pause timer. This is used to time pause mode.
 Timer pauseTimer = Timer();
 
-// create cross walk timer. This is used to allow time to leave the crosswalk after a pause.
-Timer crossWalkTimer = Timer();
+// create timers for crossing line and double line detection
+Timer firstLineBlockTimer = Timer(); //timer for getting off of the line after a pause
+Timer secondLineTimer = Timer();  //timer for establishing a window for detecting second line.
+Timer correctionTimer = Timer();  //timer for extending short line sensor corrections.
+const int correctionMinTime = 0;
+
+// state constants for cross line processing
+const int seekingFirstLine = 0;
+const int seekingSecondLine = 1;
+const int seekingBlocked = 3;
+int crossLineState;
+int crossLineCount;
+const int seekingSecondLineTimeWindow = 200; //amount of time to look for second line of double line.
+const int seekFirstLineBlockTime = 1000; //delay after return from pause to run before seeking line again.
 
 // create standby to run timer. This is to delay the start of the run until after the user's
 // hand is clear of the button
@@ -95,10 +107,12 @@ Timer crossWalkTimer = Timer();
 Timer standbyToRunTimer = Timer();
 
 const int buttonPort = 52;     // Push button input port
-
 // CleanEdge object for button. 50mS for debounce time, initial button state unpressed.
 CleanEdge buttonReader = CleanEdge(buttonPort, 50, unpressed);
 
+const int digLineSensorPortMiddle = 51;
+// CleanEdge object for the center line detector, used to find and count cross lines
+CleanEdge centerLineSensorReader = CleanEdge(digLineSensorPortMiddle, 20, light);
 //
 // Functions for setting motor speeds on the left and right sides. These functions have a signed argument
 // so the motors can be reversed on a negative sign.
@@ -173,10 +187,10 @@ void SetSpeedRight(int speed)
         Pause mode (modePause) is entered from run mode. The motors stop, the red light flashes for .5 seconds on
         and .5 seconds off for 3 seconds, then goes back run mode.
 
-        For transitions between modes, there is a function for each type of transition; standby to run, run to pause, 
+        For transitions between modes, there is a function for each type of transition; standby to run, run to pause,
         run to standby, pause to run, pause to standby. These are called in the main loop when a mode needs to change,
         and they provide a place for any action that needs to take place just once during a transition.
-         
+
         Mode state variable and constants...
 */
 int mode;
@@ -239,6 +253,8 @@ void ModePauseToStandby()
 void ModeStandbyToRun()
 {
     mode = modeRun;
+    crossLineState = seekingFirstLine;
+    crossLineCount = 0;
     runLed.Enable();
     digitalWrite(ledPortYellow, ledOff);
 }
@@ -249,7 +265,7 @@ void ModePauseToRun()
     mode = modeRun;
     runLed.Enable();
     pauseLed.Disable();
-    crossWalkTimer.Start(2000); //wait 2 seconds before looking for a cross walk again
+    firstLineBlockTimer.Start(seekFirstLineBlockTime);
 }
 
 // Mode transition from run to pause
@@ -264,7 +280,7 @@ void ModeRunToPause()
     SetSpeedLeft (0);
 
     // Pause mode is 3 seconds long. Start timer. The timer will be polled during pause
-    // mode in the main loop until the 3 seconds is past, then the transition back to 
+    // mode in the main loop until the 3 seconds is past, then the transition back to
     // run mode will happen.
     pauseTimer.Start(3000); // set timer to 3 seconds
 }
@@ -277,6 +293,7 @@ const int none = 0;
 const int right = 1;
 const int left = -1;
 int inCorrection = none;
+int previousCorrection;
 
 const int slowSideSpeed = -130;       // fixed slow side speed for turning out of line error.
 const int fastSideSpeed = 130;      // fixed high side speed for turning out of line error.
@@ -307,6 +324,10 @@ void setup()
 
     // Start motor shield
     MotorShield.begin();
+
+    // initialize inCorrection
+    inCorrection = none;
+    previousCorrection = none;
 
     //
     // Read the button. If the button is pressed, set the mode to modeTest.
@@ -392,23 +413,63 @@ void loop()
     {
         // update LED flasher
         runLed.Update();
-        /*
-            Line following algoritm 1: Very simple on/off turns. Just to see how tight a turn this can deal with.
-            Run all wheels at initial speed. When a line is detected via the digial sensor output, slow down the wheels
-            on the opposite side to a fixed value and keep running at that speed until the sensor clears the line. Experiment
-            with the speed values. I expect this will work as tuned up to the harder turns. There also needs to be
-            an exception when a crossing line is detected, which will be with the center sensor an inch or so before the side
-            sensors see it, so we can try just ignoring those until the cross lines are behind us. If this happens in a turn,
-            this may not work.
-        */
 
-        //detect path edge error condition
+        /*
+            Line following algorithm v1; There are two line sensors, one on the front right
+            corner and one on the front left corner. When one of these sensors sees a line,
+            it sets the wheels on the opposite side to slow way down or reverse, which causes
+            the robot to turn away from the line. When the sensor stops seeing the line,
+            those wheels return to normal forward rotation. There are a few special cases...
+
+            - At places where the road crosses itself, there is a line that goes across the
+            road. At that point, both line sensors will see a line. When that happens, we do
+            not correct direction, but continue to go straight.
+
+            - We also do not correct if the
+            sensor in the center between the right and left sensors sees a line.
+
+            How do we handle the case where the robot crosses the road boundary because the
+            line sensor crosses the line at too steep a boundary and doesn't have time to
+            correct? This case limits the top speed of the robot, because once the sensor is
+            on the other side of the line, there is no chance to get back via the original
+            algorithm. Detecting this case:
+
+            - the crossing is fast, so the sensor will see dark for a shorter time than
+            the normal case.
+
+            - the center sensor will see the line shortly after the crossing, because the
+            line will be at an angle to the front of the robot.
+
+            Possible recovery algorithm:
+
+            - detect the single short blip followed by the center sensor hit and reverse the
+            robot until the line is detected passing under (light-dark-light cycle) the same
+            corner sensor, then resume normal operation. The robot will immediatly correct
+            because it will be going slow.
+
+            Alternate recovery algorithm:
+
+            -set a minumum correction time. This makes the line look wider and pulls the
+            sensor back to the real line. Whether this works will depend on whether it
+            results in over correction in line grazing situations.
+        */
+        //Serial.println(correctionTimer.Test());
+        //Serial.println(correctionTimer.TimeSinceStart());
+        //Serial.println(test);
+        //        if (correctionTimer.Test())
+        //        {
+        // detect path edge error condition
         //
-        if (digSensorValLeft == dark)
+        if (digSensorValLeft == dark && digSensorValRight == dark)
+        {
+            // if both line sensors detect a line, we are at a cross line. No correction necessary.
+            inCorrection = none;
+        }
+        else if (digSensorValLeft == dark && digSensorValMiddle == light)
         {
             inCorrection = left;
         }
-        else if (digSensorValRight == dark /*|| digSensorValRightOuter == dark*/)
+        else if (digSensorValRight == dark && digSensorValMiddle == light) /*|| digSensorValRightOuter == dark*/
         {
             inCorrection = right;
         }
@@ -416,6 +477,24 @@ void loop()
         {
             inCorrection = none;
         }
+        //     }
+        // if the correction value has changed, start the correction timer. While the timer
+        // is running, we will not look at the sensor values. This is specifically to extend
+        // very short line detections, especially when the robot fully crosses a roadway
+        // boundary.
+        /*
+            if (previousCorrection != inCorrection)
+            {
+            //Serial.println("changed Correction");
+            //Serial.print("Prev:");
+            //Serial.print(previousCorrection);
+            //Serial.print("New: ");
+            //Serial.println(inCorrection);
+            correctionTimer.Start(correctionMinTime);
+            previousCorrection = inCorrection;
+            }
+        */
+
 
         //respond to error condition
         if (inCorrection == left) // Correcting for left side line detection
@@ -461,23 +540,89 @@ void loop()
             We also want to count line crossing so we know where we are on the course, especially at the end, though we could
             just count crosswalks instead.
 
+
+
+            /*
+            Cross walk detection. We use our cleanEdge object, centerLineSensorReader, to detect a
+            light-dark-light cycle, then we look for another light-dark transition within a short time later.
+            At this point, we should be just past a double cross line. Sequence of operations...
+
+
         */
-        //
-        // Temporary cross walk detection. This just looks for a black line with the center sensor
-        // and switches to pause mode after testing whether the test is enabled (resumeCrossWalkTest).
-        // When control comes back here from pause mode, a timer is set to give the robot time to
-        // move on past the black line that triggered the switch into pause mode. We test that timer
-        // here until it expires, then re enable the cross walk test.
-        //
-        boolean finishedCrossWalkDelay = crossWalkTimer.Test();   //poll the cross walk timer
-        if (finishedCrossWalkDelay)
+        /*
+            There are three possibilities at this point:
+
+            1...We are looking for a crossing line, either the first of a double line, or a crossing roadway.
+               pauseReturnDelay is false
+               firstLineDetected is false
+               crossLineState = seekingFirstLine
+
+            2...We have found a line and we are checking for a second line close to it.
+               firstLineDetected is true
+               pauseReturnDelay is false
+               crossLineState = seekingSecondLine
+
+            3...We have recently returned from a pause due to finding a double line and need to move off of it.
+               firstLineDetected is false
+               pauseReturnDelay is true
+               crossLineState = seekingBlocked
+
+        */
+        if (crossLineState == seekingFirstLine)
         {
-            if (digSensorValMiddle == dark)
+            //we are looking for a crossing line. We will check the sensor for a light-dark-light cycle
+            if (centerLineSensorReader.CheckCycle())
             {
-                Serial.println("run to pause");
-                ModeRunToPause();
+                // we just detected a light-dark-light sequence. This means we have passed one line.
+                // At this point, we set a timer and start looking for the next line until the time
+                // is up. The timer gives us enough time to detect a second line close to the first
+                // one, but not long enough to detect a line future down the road as the second line
+                // in a double line
+                crossLineState = seekingSecondLine;
+                secondLineTimer.Start(seekingSecondLineTimeWindow); //open time window for finding a second line
+                crossLineCount++;
+                Serial.println("First line detected");
+                Serial.println(crossLineCount);
+
+            }
+            else
+            {
+                // no line detected. Do nothing.
             }
         }
+        else if (crossLineState == seekingSecondLine)
+        {
+            if (!secondLineTimer.Test())
+            {
+                //second line time window is still open. Read sensor for second line. Just looking for
+                //light-dark transition here because we want to switch to pause mode right away.
+
+                if (centerLineSensorReader.Sample() == dark)
+                {
+                    ModeRunToPause(); // switch mode to pause. Next call to loop() will be in pause state;
+                    crossLineState = seekingBlocked; // once we get back from pause mode, will block the sensor for a while.
+                    crossLineCount++;
+                    Serial.println("Second line detected");
+                    Serial.println(crossLineCount);
+
+                }
+            }
+            else
+            {
+                //second line time window has expired. This means we have failed to find a second line,
+                //so there was only one line at this location.
+                crossLineState = seekingFirstLine; //start looking for the next line
+                Serial.println("Second line not detected");
+                Serial.println(crossLineCount);
+            }
+        }
+        else if (firstLineBlockTimer.Test()) // crossLineState == seekingBlocked
+        {
+            crossLineState = seekingFirstLine; //block timer has expired, so we start looking for a line again
+            Serial.println("firstLine Block complete");
+        }
+
+
 
         //
         // Look for a button press and release. If we see it, then switch to standby mode.
