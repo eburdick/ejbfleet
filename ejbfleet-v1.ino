@@ -6,56 +6,38 @@
 #include "timer_class.hh"       //support code for non-blocking timers
 #include "clean_edge_class.hh"  //support code for edge cleaned sensor reads
 
-// Define button states as physical positions
-const int pressed = LOW;
-const int unpressed = HIGH;
+/****************************************************Tweakable times and thresholds*******/
 
-// Construct a motor shield object with the default I2C address
-// and pointers to the four motors.
-Adafruit_MotorShield MotorShield = Adafruit_MotorShield();
-Adafruit_DCMotor *RFMotor = MotorShield.getMotor(1);
-Adafruit_DCMotor *RRMotor = MotorShield.getMotor(2);
-Adafruit_DCMotor *LFMotor = MotorShield.getMotor(3);
-Adafruit_DCMotor *LRMotor = MotorShield.getMotor(4);
+//Blinking LED on and off times
+long runLedOnTime  = 1000;
+long runLedOffTime = 1000;
+long pauseLedOnTime = 500;
+long pauseLedOffTime = 500;
 
-// Individual motor speed state.
-int LFMotorSpeed;
-int RFMotorSpeed;
-int LRMotorSpeed;
-int RRMotorSpeed;
+// Button debounce time window
+unsigned int buttonDebounceDelay = 50;
 
-// Initial motor speed (all four motors);
-int initialMotorSpeed;
+// middle line sensor edge cleaning delay
+const long middleLineSensorEdgeDelay = 20;
 
-// LED port definitions
-const int ledPortYellow = 25;  // Standby LED
-const int ledPortRed = 27;     // Stop flasher LED
-const int ledPortGreen = 29;   // Run flasher LED
-const int ledPortWhite = 23;   // Headlight LEDs
+// double line detection delays
 
-// LED state definitions
-const int ledOn = LOW;
-const int ledOff = HIGH;
+//amount of time to look for second line of double line
+//after finding the first line.
+const int seekingSecondLineTimeWindow = 200;
 
-// IR line sensor port definitions
-const int digLineSensorPortRight = 53;
+// amount of time to stay in pause mode
+const int pauseModeDuration = 3000;
 
-const int digLineSensorPortLeft = 49;
-const int digLineSensorPortRightOuter = 47;
-const int digLineSensorPortLeftOuter = 45;
-const int algLineSensorPortLeft = A1;
-const int algLineSensorPortLeftOuter = A6;
-const int algLineSensorPortMiddle = A2;
-const int algLineSensorPortRight = A3;
-const int algLineSensorPortRightOuter = A7;
-// note A4 and A5 are used by I2C, so we can't use them for this.
+//delay after return from pause to run before seeking line again.
+const int seekFirstLineBlockTime = 1000;
 
-// Line sensor physical values
-const int light = LOW;
-const int dark = HIGH;
+//motor speeds for line following. Negative is reverse, and fastSideSpeed is the
+//straight drive speed of the robot.
+const int slowSideSpeed = -130;       // fixed slow side speed for turning out of line error.
+const int fastSideSpeed = 130;      // fixed high side speed for turning out of line error.
 
-// Light sensor thresholds.
-const int algLightSensorPort = A0;
+// Light sensor thresholds for turning the headlights on and off.
 const int lightsOnThreshold = 3;
 const int lightsOffThreshold = 9;
 
@@ -75,10 +57,68 @@ const int algLightLineSensorThdRtOuter =   500;
 const int algLightLineSensorThdLf =   500;
 const int algLightLineSensorThdLfOuter =   500;
 
-// create blinking LED objects
-BlinkLed runLed(ledPortGreen, 1000, 1000); //two second cycle
-BlinkLed pauseLed(ledPortRed, 500, 500);   //one half second on, one half second off
+/****************************************************Hardware related constants**********/
 
+// LED port definitions
+const int ledPortYellow = 25;  // Standby LED
+const int ledPortRed = 27;     // Stop flasher LED
+const int ledPortGreen = 29;   // Run flasher LED
+const int ledPortWhite = 23;   // Headlight LEDs
+
+const int buttonPort = 52;     // Push button input port
+
+// IR line sensor port definitions
+
+const int digLineSensorPortRight = 53;
+const int digLineSensorPortLeft = 49;
+const int digLineSensorPortRightOuter = 47;
+const int digLineSensorPortLeftOuter = 45;
+
+const int digLineSensorPortMiddle = 51; // crossing line sensor
+
+// Analog ports (note A4 and A5 are used by I2C, so we can't use them for this.)
+
+const int algLightSensorPort = A0;    // for tunnel lights
+
+const int algLineSensorPortLeft = A1;
+const int algLineSensorPortLeftOuter = A6;
+const int algLineSensorPortMiddle = A2;
+const int algLineSensorPortRight = A3;
+const int algLineSensorPortRightOuter = A7;
+
+// Readability constants -- so we dont have to remember on, off, light, dark, pressed and unpressed
+
+// LED state definitions
+const int ledOn = LOW;
+const int ledOff = HIGH;
+
+// Define button states as physical positions
+const int pressed = LOW;
+const int unpressed = HIGH;
+
+// Line sensor physical values
+const int light = LOW;
+const int dark = HIGH;
+
+/**************************** C++ Object constructors ***************************************/
+
+// Construct a motor shield object with the default I2C address
+// and pointers to the four motors.
+
+Adafruit_MotorShield MotorShield = Adafruit_MotorShield();
+Adafruit_DCMotor *RFMotor = MotorShield.getMotor(1);
+Adafruit_DCMotor *RRMotor = MotorShield.getMotor(2);
+Adafruit_DCMotor *LFMotor = MotorShield.getMotor(3);
+Adafruit_DCMotor *LRMotor = MotorShield.getMotor(4);
+
+// create blinking LED objects
+BlinkLed runLed(ledPortGreen, runLedOnTime, runLedOffTime);
+BlinkLed pauseLed(ledPortRed, pauseLedOnTime, pauseLedOffTime);
+
+// create standby to run timer. This is to delay starting the
+// run at the beginning so the user has time to push the
+// button and leave the robot alone.
+Timer standbyToRunTimer = Timer();
 
 // create pause timer. This is used to time pause mode.
 Timer pauseTimer = Timer();
@@ -86,33 +126,43 @@ Timer pauseTimer = Timer();
 // create timers for crossing line and double line detection
 Timer firstLineBlockTimer = Timer(); //timer for getting off of the line after a pause
 Timer secondLineTimer = Timer();  //timer for establishing a window for detecting second line.
-Timer correctionTimer = Timer();  //timer for extending short line sensor corrections.
-const int correctionMinTime = 0;
+
+// CleanEdge object for button. Initial button state unpressed.
+CleanEdge buttonReader = CleanEdge(buttonPort, buttonDebounceDelay, unpressed);
+
+// CleanEdge object for the center line detector, used to find and count cross lines,
+// avoiding multiple counts at messy edges.
+CleanEdge centerLineSensorReader = CleanEdge(digLineSensorPortMiddle, middleLineSensorEdgeDelay, light);
+
+/*******************************************************Working Global State********************/
+
+// Individual motor speed state.
+int LFMotorSpeed;
+int RFMotorSpeed;
+int LRMotorSpeed;
+int RRMotorSpeed;
+
+// Initial motor speed (all four motors);
+int initialMotorSpeed;
 
 // state constants for cross line processing
 const int seekingFirstLine = 0;
 const int seekingSecondLine = 1;
 const int seekingBlocked = 3;
+
 int crossLineState;
 int crossLineCount;
-const int seekingSecondLineTimeWindow = 200; //amount of time to look for second line of double line.
-const int seekFirstLineBlockTime = 1000; //delay after return from pause to run before seeking line again.
 
-// create standby to run timer. This is to delay the start of the run until after the user's
-// hand is clear of the button
-// Timer pauseToRunTimer = Timer();
+// Loop mode state variables
+int mode;
+const int modeTest = 1;       //test mode for testing stuff on the robot
+const int modeStandby = 2;    //standby mode for before and after the timed run
+const int modeRun = 3;        //run mode for the timed run
+const int modePause = 4;      //pause mode for crosswalk stops while in run mode
 
-// create standby to run timer. This is to delay starting the run at the beginning so the user has time to push the
-// button and leave the robot alone.
-Timer standbyToRunTimer = Timer();
 
-const int buttonPort = 52;     // Push button input port
-// CleanEdge object for button. 50mS for debounce time, initial button state unpressed.
-CleanEdge buttonReader = CleanEdge(buttonPort, 50, unpressed);
+/************************************************************Utility Functions******************/
 
-const int digLineSensorPortMiddle = 51;
-// CleanEdge object for the center line detector, used to find and count cross lines
-CleanEdge centerLineSensorReader = CleanEdge(digLineSensorPortMiddle, 20, light);
 //
 // Functions for setting motor speeds on the left and right sides. These functions have a signed argument
 // so the motors can be reversed on a negative sign.
@@ -143,6 +193,7 @@ void SetSpeedLeft(int speed)
     LFMotor->setSpeed(LFMotorSpeed);
     LRMotor->setSpeed(LRMotorSpeed);
 }
+
 void SetSpeedRight(int speed)
 {
     if (speed == 0)
@@ -168,36 +219,7 @@ void SetSpeedRight(int speed)
 }
 
 
-/*
-      There are four system modes...
 
-        Test mode (modeTest) is for testing sensors, etc. It is entered by holding down the button
-        during startup. Details TBD
-
-        Standby mode (modeStandby) is automatically entered at power on if the button is not being held down.
-        In standby, the yellow light is on to indicate the mode and all motors are stopped. Pushing the button
-        while in standby mode starts run mode.
-
-        Run mode (modeRun) is entered when the button is pushed while in standby mode. In this mode, the green light is
-        flashing and the autonomous
-        line following challenge is run until the end line is detected or the button is pushed, at which point the
-        mode switches back to standby mode. This mode also looks for a double line across the path and if it finds it, we
-        enter pause mode for three seconds.
-
-        Pause mode (modePause) is entered from run mode. The motors stop, the red light flashes for .5 seconds on
-        and .5 seconds off for 3 seconds, then goes back run mode.
-
-        For transitions between modes, there is a function for each type of transition; standby to run, run to pause,
-        run to standby, pause to run, pause to standby. These are called in the main loop when a mode needs to change,
-        and they provide a place for any action that needs to take place just once during a transition.
-
-        Mode state variable and constants...
-*/
-int mode;
-const int modeTest = 1;       //test mode for testing stuff on the robot
-const int modeStandby = 2;    //standby mode for before and after the timed run
-const int modeRun = 3;        //run mode for the timed run
-const int modePause = 4;      //pause mode for crosswalk stops while in run mode
 /*
     Mode switching functions. When switching into the modes. These make the one time changes at the beginning of
     each mode.
@@ -282,7 +304,8 @@ void ModeRunToPause()
     // Pause mode is 3 seconds long. Start timer. The timer will be polled during pause
     // mode in the main loop until the 3 seconds is past, then the transition back to
     // run mode will happen.
-    pauseTimer.Start(3000); // set timer to 3 seconds
+
+    pauseTimer.Start(pauseModeDuration); // set timer to 3 seconds
 }
 
 /*
@@ -295,10 +318,33 @@ const int left = -1;
 int inCorrection = none;
 int previousCorrection;
 
-const int slowSideSpeed = -130;       // fixed slow side speed for turning out of line error.
-const int fastSideSpeed = 130;      // fixed high side speed for turning out of line error.
 
 
+/*
+      There are four system modes...
+
+        Test mode (modeTest) is for testing sensors, etc. It is entered by holding down the button
+        during startup. Details TBD
+
+        Standby mode (modeStandby) is automatically entered at power on if the button is not being held down.
+        In standby, the yellow light is on to indicate the mode and all motors are stopped. Pushing the button
+        while in standby mode starts run mode.
+
+        Run mode (modeRun) is entered when the button is pushed while in standby mode. In this mode, the green light is
+        flashing and the autonomous
+        line following challenge is run until the end line is detected or the button is pushed, at which point the
+        mode switches back to standby mode. This mode also looks for a double line across the path and if it finds it, we
+        enter pause mode for three seconds.
+
+        Pause mode (modePause) is entered from run mode. The motors stop, the red light flashes for .5 seconds on
+        and .5 seconds off for 3 seconds, then goes back run mode.
+
+        For transitions between modes, there is a function for each type of transition; standby to run, run to pause,
+        run to standby, pause to run, pause to standby. These are called in the main loop when a mode needs to change,
+        and they provide a place for any action that needs to take place just once during a transition.
+
+        Mode state variable and constants...
+*/
 
 //
 // Initialize state, set up hardware, prepare starting state
@@ -337,7 +383,7 @@ void setup()
     if (buttonReader.Sample() == pressed)
     {
         //        EnterModeTest();
-        ModeStartToStandby();
+        ModeStartToTest();
     }
     else
     {
@@ -349,12 +395,8 @@ void setup()
 //
 void loop()
 {
-    static unsigned oldTime;
-    unsigned currentTime = millis();
-    //Serial.println(currentTime - oldTime);
-    oldTime = currentTime;
-    //
-    // Code for all modes reads the sensors, and turns on the headlights if it is dark.
+
+    /************************ Code for all modes reads the sensors, and turns on the headlights if it is dark. ***************/
     //
     // read IR line sensors
     //
@@ -369,22 +411,6 @@ void loop()
     int algSensorValRight = analogRead(algLineSensorPortRight);
     int algSensorValRightOuter = analogRead(algLineSensorPortRightOuter);
 
-    /*  debug code
-        Serial.print("left digital ");
-        Serial.println(digSensorValLeft);
-        Serial.print("mid digital ");
-        Serial.println(digSensorValMiddle);
-        Serial.print("right digital ");
-        Serial.println(digSensorValRight);
-        Serial.println("");
-        Serial.print("left analog ");
-        Serial.println(algSensorValLeft);
-        Serial.print("mid analog ");
-        Serial.println(algSensorValMiddle);
-        Serial.print("right analog ");
-        Serial.println(algSensorValRight);
-        delay(500);
-    */
 
     // resd ambient light sensor. Turn on headlights on at the low light threshold and off
     // at the high light threshold
@@ -406,9 +432,7 @@ void loop()
         Serial.println(lightLevel);
     */
 
-    //
-    // Run mode code.
-    //
+    /************************************************************************* Mode Run Code ******************/
     if (mode == modeRun)
     {
         // update LED flasher
@@ -428,38 +452,8 @@ void loop()
             - We also do not correct if the
             sensor in the center between the right and left sensors sees a line.
 
-            How do we handle the case where the robot crosses the road boundary because the
-            line sensor crosses the line at too steep a boundary and doesn't have time to
-            correct? This case limits the top speed of the robot, because once the sensor is
-            on the other side of the line, there is no chance to get back via the original
-            algorithm. Detecting this case:
-
-            - the crossing is fast, so the sensor will see dark for a shorter time than
-            the normal case.
-
-            - the center sensor will see the line shortly after the crossing, because the
-            line will be at an angle to the front of the robot.
-
-            Possible recovery algorithm:
-
-            - detect the single short blip followed by the center sensor hit and reverse the
-            robot until the line is detected passing under (light-dark-light cycle) the same
-            corner sensor, then resume normal operation. The robot will immediatly correct
-            because it will be going slow.
-
-            Alternate recovery algorithm:
-
-            -set a minumum correction time. This makes the line look wider and pulls the
-            sensor back to the real line. Whether this works will depend on whether it
-            results in over correction in line grazing situations.
         */
-        //Serial.println(correctionTimer.Test());
-        //Serial.println(correctionTimer.TimeSinceStart());
-        //Serial.println(test);
-        //        if (correctionTimer.Test())
-        //        {
-        // detect path edge error condition
-        //
+
         if (digSensorValLeft == dark && digSensorValRight == dark)
         {
             // if both line sensors detect a line, we are at a cross line. No correction necessary.
@@ -477,23 +471,6 @@ void loop()
         {
             inCorrection = none;
         }
-        //     }
-        // if the correction value has changed, start the correction timer. While the timer
-        // is running, we will not look at the sensor values. This is specifically to extend
-        // very short line detections, especially when the robot fully crosses a roadway
-        // boundary.
-        /*
-            if (previousCorrection != inCorrection)
-            {
-            //Serial.println("changed Correction");
-            //Serial.print("Prev:");
-            //Serial.print(previousCorrection);
-            //Serial.print("New: ");
-            //Serial.println(inCorrection);
-            correctionTimer.Start(correctionMinTime);
-            previousCorrection = inCorrection;
-            }
-        */
 
 
         //respond to error condition
@@ -517,7 +494,7 @@ void loop()
         }
 
         /*
-            Line counting and crosswalk detection
+             Line counting and crosswalk detection
 
             This code counts the lines crossed by the robot. Where the roadway crosses itself, we see lines
             crossing the road. At these points, we need to ignore the line following sensors, because the
@@ -526,46 +503,32 @@ void loop()
             crossing roadway boundary. These positions are designated as crosswalks and the robot needs to go
             into pause mode for three seconds at these points. There is also a double line at the end of the course,
             where we need to go into standby mode.
-
-            The first crosswalk is in the middle of a straight section of the road, but the second one is at the end
-            of a tight curve, so the robot will be doing course corrections, so we cannot assume it is going the same
-            speed as on a straight road.
-
-            Candidate for how to detect a double line, assuming there is a center sensor:
-
-            Time the crossing time for the first line and look for another crossing within a similar amount of time. This only
-            works if course corrections do not result in entry and exit on the leading edges of the lines. This could probably be
-            mitigated with some dead time after the initial detection of each edge.
-
-            We also want to count line crossing so we know where we are on the course, especially at the end, though we could
-            just count crosswalks instead.
+        */
 
 
-
-            /*
+        /*
             Cross walk detection. We use our cleanEdge object, centerLineSensorReader, to detect a
             light-dark-light cycle, then we look for another light-dark transition within a short time later.
             At this point, we should be just past a double cross line. Sequence of operations...
-
-
         */
+
         /*
             There are three possibilities at this point:
 
             1...We are looking for a crossing line, either the first of a double line, or a crossing roadway.
-               pauseReturnDelay is false
-               firstLineDetected is false
-               crossLineState = seekingFirstLine
+            pauseReturnDelay is false
+            firstLineDetected is false
+            crossLineState = seekingFirstLine
 
             2...We have found a line and we are checking for a second line close to it.
-               firstLineDetected is true
-               pauseReturnDelay is false
-               crossLineState = seekingSecondLine
+            firstLineDetected is true
+            pauseReturnDelay is false
+            crossLineState = seekingSecondLine
 
             3...We have recently returned from a pause due to finding a double line and need to move off of it.
-               firstLineDetected is false
-               pauseReturnDelay is true
-               crossLineState = seekingBlocked
+            firstLineDetected is false
+            pauseReturnDelay is true
+            crossLineState = seekingBlocked
 
         */
         if (crossLineState == seekingFirstLine)
@@ -576,13 +539,18 @@ void loop()
                 // we just detected a light-dark-light sequence. This means we have passed one line.
                 // At this point, we set a timer and start looking for the next line until the time
                 // is up. The timer gives us enough time to detect a second line close to the first
-                // one, but not long enough to detect a line future down the road as the second line
+                // one, but not long enough to detect a line furthur down the road as the second line
                 // in a double line
+
+                // count the line
+                crossLineCount++;
+
+                // update state to start seeking second line and start the time window
                 crossLineState = seekingSecondLine;
                 secondLineTimer.Start(seekingSecondLineTimeWindow); //open time window for finding a second line
-                crossLineCount++;
-                Serial.println("First line detected");
-                Serial.println(crossLineCount);
+
+                //Serial.println("First line detected");
+                //Serial.println(crossLineCount);
 
             }
             else
@@ -595,52 +563,67 @@ void loop()
             if (!secondLineTimer.Test())
             {
                 //second line time window is still open. Read sensor for second line. Just looking for
-                //light-dark transition here because we want to switch to pause mode right away.
+                //light-dark transition here because we want to switch to pause mode right away if we
+                //see it.
 
                 if (centerLineSensorReader.Sample() == dark)
                 {
-                    ModeRunToPause(); // switch mode to pause. Next call to loop() will be in pause state;
-                    crossLineState = seekingBlocked; // once we get back from pause mode, will block the sensor for a while.
-                    crossLineCount++;
-                    Serial.println("Second line detected");
-                    Serial.println(crossLineCount);
+                    crossLineCount++; // count the second line
 
+                    ModeRunToPause(); // switch mode to pause. Next call to loop() will be in pause state;
+
+                    crossLineState = seekingBlocked; // once we get back from pause mode, will block the sensor for a while.
+
+                    //Serial.println("Second line detected");
+                    //Serial.println(crossLineCount);
                 }
             }
             else
             {
                 //second line time window has expired. This means we have failed to find a second line,
-                //so there was only one line at this location.
+                //close enough to the first one, so there was only one line at this location.
+
                 crossLineState = seekingFirstLine; //start looking for the next line
-                Serial.println("Second line not detected");
-                Serial.println(crossLineCount);
+
+                //Serial.println("Second line not detected");
+                //Serial.println(crossLineCount);
             }
         }
         else if (firstLineBlockTimer.Test()) // crossLineState == seekingBlocked
         {
-            crossLineState = seekingFirstLine; //block timer has expired, so we start looking for a line again
-            Serial.println("firstLine Block complete");
+            // here we are not seeking the first or second line, but the timer we started to avoid double
+            // counting the second line has expired, so we can start looking for a first line again.
+            crossLineState = seekingFirstLine;
+
+            //Serial.println("firstLine Block complete");
+        }
+        else
+        {
+            // if we fall through to here, we have left pause mode, but are still waiting to start
+            // looking for lines again, so we do nothing. This will keep happening until the timer
+            // expires.
         }
 
-
-
+        /*****************Button Processing**********************/
         //
         // Look for a button press and release. If we see it, then switch to standby mode.
         //
         if (buttonReader.CheckCycle())      // when the button is pressed and released, we go to standby mode
         {
-            Serial.println("run to standby");
+            //Serial.println("run to standby");
             ModeRunToStandby();
         }
-    }
+    } // end of run
 
+    /********************************************************************** Mode Test Code ******************/
     else if (mode == modeTest)
     {
         //
         // code for test mode empty for now
         //
-    }
+    } // end of test
 
+    /********************************************************************** Mode Standby Code **************/
     else if (mode == modeStandby)
     {
         //
@@ -656,7 +639,7 @@ void loop()
             if (standbyToRunTimer.Test())  // poll the timer. When it is finished, enter run mode
             {
                 countdownToRun = false;
-                Serial.println("entering run mode");
+                //Serial.println("entering run mode");
                 ModeStandbyToRun();
             }
         }
@@ -665,13 +648,15 @@ void loop()
             // Note: CheckButtonCycle returns true only once per button cycle.
             countdownToRun = true;                    //flag that we are in the countdown to run
             standbyToRunTimer.Start(2000);       //Start pause to run timer for 2 second countdown
-            Serial.println("standby to run start delay");
+            //Serial.println("standby to run start delay");
         }
         else
         {
             // do nothing while we wait for button cycle
         }
-    }
+    } // end of standby
+
+    /******************************************************************************* Pause Mode Code **************/
     else if (mode == modePause)
     {
         //
@@ -683,7 +668,7 @@ void loop()
         if (pauseDone)
         {
             ModePauseToRun();
-            Serial.println("pause to run");
+            //Serial.println("pause to run");
         }
         //
         // For the rare case that the button is pressed during pause mode:
@@ -691,7 +676,7 @@ void loop()
         //
         if (buttonReader.CheckCycle())      // when the button is pressed and released, we go to standby mode
         {
-            Serial.println("pause to standby");
+            //Serial.println("pause to standby");
             ModePauseToStandby();
         }
     } // end of  pause
