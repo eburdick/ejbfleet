@@ -24,13 +24,13 @@ const long middleLineSensorEdgeDelay = 20;
 
 //amount of time to look for second line of double line
 //after finding the first line.
-const int seekingSecondLineTimeWindow = 200;
+const int seekingSecondLineTimeWindow = 300;
 
 // amount of time to stay in pause mode
 const int pauseModeDuration = 3000;
 
 //delay after return from pause to run before seeking line again.
-const int seekFirstLineBlockTime = 1000;
+const int seekFirstLineBlockTime = 500;
 
 //motor speeds for line following. Negative is reverse, and fastSideSpeed is the
 //straight drive speed of the robot.
@@ -411,7 +411,7 @@ void loop()
     int algSensorValRight = analogRead(algLineSensorPortRight);
     int algSensorValRightOuter = analogRead(algLineSensorPortRightOuter);
 
-
+                              
     // resd ambient light sensor. Turn on headlights on at the low light threshold and off
     // at the high light threshold
     //
@@ -421,7 +421,7 @@ void loop()
     {
         digitalWrite(ledPortWhite, ledOn);
     }
-
+    
     if (lightLevel > lightsOffThreshold)
     {
         digitalWrite(ledPortWhite, ledOff);
@@ -447,26 +447,42 @@ void loop()
 
             - At places where the road crosses itself, there is a line that goes across the
             road. At that point, both line sensors will see a line. When that happens, we do
-            not correct direction, but continue to go straight.
+            not correct direction, but continue to go straight. This depends on the robot not
+            being at a significant angle when it encounters a cross line.
 
-            - We also do not correct if the
-            sensor in the center between the right and left sensors sees a line.
-
+            - For cross lines, we have some special cases.
+                1. If all three sensors (left right, middle) are dark, we assume we are crossing
+                the line. straight on. In this case, we do not correct.
+                2. If middle and right are dark, we assume we are hitting the cross line aiming left,
+                so we correct by turning right. 
+                3. if middle and left are dark, we assume we are hitting the cross line aiming right,
+                so we correct by turning left.
         */
 
         if (digSensorValLeft == dark && digSensorValRight == dark)
         {
-            // if both line sensors detect a line, we are at a cross line. No correction necessary.
+          // assumption is that if we see both sensors dark, then we are at a cross line and the 
+          // robot is going straight. 
             inCorrection = none;
         }
         else if (digSensorValLeft == dark && digSensorValMiddle == light)
         {
+          // road edge detected. Turn toward the center of the road.
             inCorrection = left;
         }
         else if (digSensorValRight == dark && digSensorValMiddle == light) /*|| digSensorValRightOuter == dark*/
         {
+          // road edge detected. Turn toward the center of the road
             inCorrection = right;
         }
+        else if (digSensorValRight == dark && digSensorValMiddle == dark)
+        {
+          // crossing line aimed left. correct as if left sensor detected the left road edge
+            inCorrection = left;
+        }
+        else if (digSensorValLeft == dark && digSensorValMiddle == dark)
+          // crossing line aimed right. Correct as if right sensor detected the right road edge
+            inCorrection = right;
         else
         {
             inCorrection = none;
