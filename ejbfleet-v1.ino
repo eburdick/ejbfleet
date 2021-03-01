@@ -1,4 +1,19 @@
-
+/*
+ * ejbfleet-v1.ino
+ * 
+ * Arduino code for Red Shift fleet bot challenge
+ * 
+ * Following along with students to discover the problems they will be encountering and to
+ * get real experience I can use to help them. 
+ * 
+ * Modifications:
+ * 
+ * 3/1/21: adding this revision header. Code basically works on my test track. 
+ * 
+ * Next: Need to test on the real track. Need to add a mechanism for recognising 
+ * the end of the course, assuming the robot gets there. Experiment with reading 
+ * the line sensors as analog signals to provide more control over corrections.
+ */
 #include <Wire.h>
 #include <Adafruit_MotorShield.h>
 #include <Adafruit_MPU6050.h>
