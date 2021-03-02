@@ -14,9 +14,17 @@
     the end of the course, assuming the robot gets there. Experiment with reading
     the line sensors as analog signals to provide more control over corrections.
 
-    3/1/21 7pm: added code for test mode that reports line sensor digital and 
+    3/1/21 7pm: added code for test mode that reports line sensor digital and
     analog values when it discovers a digital state change.
+
+    3/2/21 1:30am: Added code for analog sensing with software thresholds for 
+    the line sensors. The crossing line detection is still using digital
+    sensing because it uses the clean edge class. May not change this. Added code 
+    for line counting and switch to standby at the end. Track
+    testing seems to work.
 */
+#define ANALOGSENSING //using analog outputs of line sensors and software thresholds.
+
 #include <Wire.h>
 #include <Adafruit_MotorShield.h>
 #include <Adafruit_MPU6050.h>
@@ -38,17 +46,29 @@ unsigned int buttonDebounceDelay = 50;
 // middle line sensor edge cleaning delay
 const long middleLineSensorEdgeDelay = 20;
 
+// delay for passing the start/finish line at the end
+const long finishLineDelay = 1000;
+
+// line sensor analog thresholds. Remember Dark is higher than light
+int thresholdRightDark = 600;
+int thresholdRightLight = 600;
+int thresholdLeftDark = 600;
+int thresholdLeftLight = 600;
+int thresholdMiddleDark = 600;
+int thresholdMiddleLight = 600;
+
+
 // double line detection delays
 
 //amount of time to look for second line of double line
 //after finding the first line.
-const int seekingSecondLineTimeWindow = 300;
+const int seekingSecondLineTimeWindow = 300; // .3 second
 
 // amount of time to stay in pause mode
-const int pauseModeDuration = 3000;
+const int pauseModeDuration = 3000;  // 3 seconds
 
 //delay after return from pause to run before seeking line again.
-const int seekFirstLineBlockTime = 500;
+const int seekFirstLineBlockTime = 500;  // Half second
 
 //motor speeds for line following. Negative is reverse, and fastSideSpeed is the
 //straight drive speed of the robot.
@@ -59,21 +79,6 @@ const int fastSideSpeed = 130;      // fixed high side speed for turning out of 
 const int lightsOnThreshold = 3;
 const int lightsOffThreshold = 9;
 
-// Line sensor analog thresholds. Each sensor has a dark threshold and a light threshold.
-// The dark threshold is the voltage at which we switch from light state to dark state.
-// The light threshold is the voltage at which we switch from dark state to light state.
-// These are different because when we switch states from light to dark, we don't want to
-// switch back with a small change in light level and vice versa. Adding hysteresis through
-// this method should prevent this issue.
-
-const int algDarkLineSensorThdRt =  500;
-const int algDarkLineSensorThdRtOuter =  500;
-const int algDarkLineSensorThdLf =   500;
-const int algDarkLineSensorThdLfOuter =   500;
-const int algLightLineSensorThdRt =   500;
-const int algLightLineSensorThdRtOuter =   500;
-const int algLightLineSensorThdLf =   500;
-const int algLightLineSensorThdLfOuter =   500;
 
 /****************************************************Hardware related constants**********/
 
@@ -94,11 +99,11 @@ const int digLineSensorPortMiddle = 51; // crossing line sensor
 
 // Analog ports (note A4 and A5 are used by I2C, so we can't use them for this.)
 
-const int algLightSensorPort = A0;    // for tunnel lights
+const int analogLightSensorPort = A0;    // for tunnel lights
 
-const int algLineSensorPortLeft = A1;
-const int algLineSensorPortMiddle = A2;
-const int algLineSensorPortRight = A3;
+const int analogLineSensorPortLeft = A1;
+const int analogLineSensorPortMiddle = A2;
+const int analogLineSensorPortRight = A3;
 
 // Readability constants -- so we dont have to remember on, off, light, dark, pressed and unpressed
 
@@ -134,6 +139,9 @@ BlinkLed pauseLed(ledPortRed, pauseLedOnTime, pauseLedOffTime);
 // button and leave the robot alone.
 Timer standbyToRunTimer = Timer();
 
+// create finish line timer to keep going a couple of seconds at the end.
+Timer finishLineTimer = Timer();
+
 // create pause timer. This is used to time pause mode.
 Timer pauseTimer = Timer();
 
@@ -151,20 +159,17 @@ CleanEdge centerLineSensorReader = CleanEdge(digLineSensorPortMiddle, middleLine
 /*******************************************************Working Global State********************/
 
 // Line sensor values. These are used in setup() and loop()
-int digSensorValLeft;
-int digSensorValMiddle;
-int digSensorValRight;
-int algSensorValLeft;
-int algSensorValMiddle;
-int algSensorValRight;
+int lineSensorValLeft;
+int lineSensorValMiddle;
+int lineSensorValRight;
+int analogSensorValLeft;
+int analogSensorValMiddle;
+int analogSensorValRight;
 
 // Previous sensor values. Used when we need to detect a change.
-int prevDigSensorValLeft;
-int prevDigSensorValMiddle;
-int prevDigSensorValRight;
-int prevAlgSensorValLeft;
-int prevAlgSensorValMiddle;
-int prevAlgSensorValRight;
+int prevLineSensorValLeft;
+int prevLineSensorValMiddle;
+int prevLineSensorValRight;
 
 // Individual motor speed state.
 int LFMotorSpeed;
@@ -180,8 +185,13 @@ const int seekingFirstLine = 0;
 const int seekingSecondLine = 1;
 const int seekingBlocked = 3;
 
+const int totalDoubleLineCrossings = 4; //Crossing starting line twice and two crosswalks
+
+int waitingForFinalStandby;  //set when we are crossing the finish line
+
 int crossLineState;
 int crossLineCount;
+int doubleLineCount;
 
 // Loop mode state variables
 int mode;
@@ -266,20 +276,16 @@ void ModeStartToTest()
 
     //read all of the line sensors to initialize their state and initialize previous state.
     //this is for sampling the analog values when the digital values change.
-    digSensorValLeft = digitalRead(digLineSensorPortLeft);
-    digSensorValMiddle = digitalRead(digLineSensorPortMiddle);
-    digSensorValRight = digitalRead(digLineSensorPortRight);
-    algSensorValLeft = analogRead(algLineSensorPortLeft);
-    algSensorValMiddle = analogRead(algLineSensorPortMiddle);
-    algSensorValRight = analogRead(algLineSensorPortRight);
+    lineSensorValLeft = digitalRead(digLineSensorPortLeft);
+    lineSensorValMiddle = digitalRead(digLineSensorPortMiddle);
+    lineSensorValRight = digitalRead(digLineSensorPortRight);
+    analogSensorValLeft = analogRead(analogLineSensorPortLeft);
+    analogSensorValMiddle = analogRead(analogLineSensorPortMiddle);
+    analogSensorValRight = analogRead(analogLineSensorPortRight);
 
-    prevDigSensorValLeft = digSensorValLeft;
-    prevDigSensorValMiddle = digSensorValMiddle;
-    prevDigSensorValRight = digSensorValRight;
-    prevAlgSensorValLeft = algSensorValLeft;
-    prevAlgSensorValMiddle = algSensorValMiddle;
-    prevAlgSensorValRight = algSensorValRight;
-
+    prevLineSensorValLeft = lineSensorValLeft;
+    prevLineSensorValMiddle = lineSensorValMiddle;
+    prevLineSensorValRight = lineSensorValRight;
 }
 
 // Mode transition from start to standby. This is normally the starting mode.
@@ -325,8 +331,10 @@ void ModeStandbyToRun()
     mode = modeRun;
     crossLineState = seekingFirstLine;
     crossLineCount = 0;
+    doubleLineCount = 0;
     runLed.Enable();
     digitalWrite(ledPortYellow, ledOff);
+    waitingForFinalStandby = false;
 }
 
 // Mode transition from pause to run
@@ -445,21 +453,91 @@ void loop()
 {
 
     /************************ Code for all modes reads the sensors, and turns on the headlights if it is dark. ***************/
-    //
-    // read IR line sensors
-    //
-    digSensorValLeft = digitalRead(digLineSensorPortLeft);
-    digSensorValMiddle = digitalRead(digLineSensorPortMiddle);
-    digSensorValRight = digitalRead(digLineSensorPortRight);
-    algSensorValLeft = analogRead(algLineSensorPortLeft);
-    algSensorValMiddle = analogRead(algLineSensorPortMiddle);
-    algSensorValRight = analogRead(algLineSensorPortRight);
+    /*
+        read IR line sensors, digital version. This just reads the digital value
+        from the sensor, which sets its threshold with a trim pot.
+    */
+#ifndef ANALOGSENSING
+    lineSensorValLeft = digitalRead(digLineSensorPortLeft);
+    lineSensorValMiddle = digitalRead(digLineSensorPortMiddle);
+    lineSensorValRight = digitalRead(digLineSensorPortRight);
+#endif
 
+#ifdef ANALOGSENSING
+    /*
+        read IR line sensor, analog version. This reads the analog value of the
+        sensor and compares it with the analog thresholds. There is a threshold
+        for dark and a threshold for light, which gives us a chance to create
+        hysteresis for each sensor.
+
+        First, read the sensor analog values
+    */
+    analogSensorValLeft = analogRead(analogLineSensorPortLeft);
+    analogSensorValMiddle = analogRead(analogLineSensorPortMiddle);
+    analogSensorValRight = analogRead(analogLineSensorPortRight);
+
+    /*
+        Test each sensor value against the light threshold and the dark
+        threshold. Note that the analog value goes up as the reflected
+        light is darker. If the sensor output is higher than the dark
+        threshold, set the digital state for the sensor to dark. If it
+        is lower than the light threshold, set it to light. If there is
+        a gap between the thresholds, there is hysteresis. If the thresholds
+        are equal, there will be no hysteresis. If the dark threshold is
+        less than the light threshold, then the dark threshold is
+        is effectively the only threshold, because if the dark threshold
+        test fails, the light threshold will always succeed.
+    */
+    // left sensor code
+    if (analogSensorValLeft > thresholdLeftDark)
+    {
+        lineSensorValLeft = dark;
+    }
+    else if (analogSensorValLeft <= thresholdLeftLight)
+    {
+        lineSensorValLeft = light;
+    }
+    else
+    {
+        // no change. Keep the previous value. This is the hysteresis
+        // dead zone.
+    }
+
+    // middle sensor code
+    if (analogSensorValMiddle > thresholdMiddleDark)
+    {
+        lineSensorValMiddle = dark;
+    }
+    else if (analogSensorValMiddle <= thresholdMiddleLight)
+    {
+        lineSensorValMiddle = light;
+    }
+    else
+    {
+        // no change. Keep the previous value. This is the hysteresis
+        // dead zone.
+    }
+
+    // right sensor code
+    if (analogSensorValRight > thresholdRightDark)
+    {
+        lineSensorValRight = dark;
+    }
+    else if (analogSensorValRight <= thresholdRightLight)
+    {
+        lineSensorValRight = light;
+    }
+    else
+    {
+        // no change. Keep the previous value. This is the hysteresis
+        // dead zone.
+    }
+#endif
 
     // resd ambient light sensor. Turn on headlights on at the low light threshold and off
     // at the high light threshold
     //
-    int lightLevel = analogRead(algLightSensorPort);
+    int lightLevel = analogRead(analogLightSensorPort);
 
     if (lightLevel < lightsOnThreshold)
     {
@@ -482,6 +560,7 @@ void loop()
         // update LED flasher
         runLed.Update();
 
+
         /*
             Line following algorithm v1; There are two line sensors, one on the front right
             corner and one on the front left corner. When one of these sensors sees a line,
@@ -503,28 +582,28 @@ void loop()
                 so we correct by turning left.
         */
 
-        if (digSensorValLeft == dark && digSensorValRight == dark)
+        if (lineSensorValLeft == dark && lineSensorValRight == dark)
         {
             // assumption is that if we see both sensors dark, then we are at a cross line and the
             // robot is going straight.
             inCorrection = none;
         }
-        else if (digSensorValLeft == dark && digSensorValMiddle == light)
+        else if (lineSensorValLeft == dark && lineSensorValMiddle == light)
         {
             // road edge detected. Turn toward the center of the road.
             inCorrection = left;
         }
-        else if (digSensorValRight == dark && digSensorValMiddle == light) /*|| digSensorValRightOuter == dark*/
+        else if (lineSensorValRight == dark && lineSensorValMiddle == light) /*|| lineSensorValRightOuter == dark*/
         {
             // road edge detected. Turn toward the center of the road
             inCorrection = right;
         }
-        else if (digSensorValRight == dark && digSensorValMiddle == dark)
+        else if (lineSensorValRight == dark && lineSensorValMiddle == dark)
         {
             // crossing line aimed left. correct as if left sensor detected the left road edge
             inCorrection = left;
         }
-        else if (digSensorValLeft == dark && digSensorValMiddle == dark)
+        else if (lineSensorValLeft == dark && lineSensorValMiddle == dark)
             // crossing line aimed right. Correct as if right sensor detected the right road edge
             inCorrection = right;
         else
@@ -629,10 +708,38 @@ void loop()
                 if (centerLineSensorReader.Sample() == dark)
                 {
                     crossLineCount++; // count the second line
+                    doubleLineCount++; // count the double line
 
-                    ModeRunToPause(); // switch mode to pause. Next call to loop() will be in pause state;
+                    if (doubleLineCount == 1)
+                    {
+                        // Stay in run mode. This is the start of the course. But set the
+                        // first line detect timeout to keep from detecting this line again.
+                        firstLineBlockTimer.Start(seekFirstLineBlockTime);
+                        crossLineState = seekingBlocked;
 
-                    crossLineState = seekingBlocked; // once we get back from pause mode, will block the sensor for a while.
+                    }
+                    else if (doubleLineCount == totalDoubleLineCrossings)
+                    {
+                        // double line is the start/finish line. Set the finish line timer and
+                        // the state flag indicating we are at the finish line. When the timer
+                        // has expired, we will go into standby mode
+                        finishLineTimer.Start(finishLineDelay);
+                        waitingForFinalStandby = true;
+                        //
+                        // Just to make sure we stop looking for crosslines and avoid finding
+                        // this one again on the next time around the loop, we block line seeking
+                        // and start first line block timer.
+                        firstLineBlockTimer.Start(seekFirstLineBlockTime);
+                        crossLineState = seekingBlocked;
+                    }
+                    else if (doubleLineCount < totalDoubleLineCrossings)
+                    {
+                        // double line is a crosswalk. Go to mode pause
+                        ModeRunToPause(); // switch mode to pause. Next call to loop() will be in pause state;
+
+                        crossLineState = seekingBlocked; // once we get back from pause mode, will block the sensor for a while.
+                    }
+
 
                     //Serial.println("Second line detected");
                     //Serial.println(crossLineCount);
@@ -673,6 +780,14 @@ void loop()
             //Serial.println("run to standby");
             ModeRunToStandby();
         }
+
+        // check if we have passed the finish line. We want to run a couple of seconds after
+        // detecting the finish line before goint into pause mode.
+        if (waitingForFinalStandby && finishLineTimer.Test())
+        {
+            //Serial.println("finish line");
+            ModeRunToStandby();
+        }
     } // end of run
 
     /********************************************************************** Mode Test Code ******************/
@@ -690,32 +805,32 @@ void loop()
         */
         char stringBuffer[80];  // character array to assemble formatted strings using sprintf()
 
-        // Check each sensor digital state and report changes to the serial terminal along with the 
+        // Check each sensor digital state and report changes to the serial terminal along with the
         // analog values.
-        if (prevDigSensorValLeft != digSensorValLeft)
+        if (prevLineSensorValLeft != lineSensorValLeft)
         {
             // report both the left and the right sensor data
-            sprintf(stringBuffer, "L Sensor %d -> %d Analog %d", prevDigSensorValLeft, digSensorValLeft, algSensorValLeft);
+            sprintf(stringBuffer, "L Sensor %d -> %d Analog %d", prevLineSensorValLeft, lineSensorValLeft, analogSensorValLeft);
             Serial.println(stringBuffer);
-            sprintf(stringBuffer, "R Sensor        %d Analog %d", digSensorValRight, algSensorValRight);
+            sprintf(stringBuffer, "R Sensor        %d Analog %d", lineSensorValRight, analogSensorValRight);
             Serial.println(stringBuffer);
-            prevDigSensorValLeft = digSensorValLeft;
+            prevLineSensorValLeft = lineSensorValLeft;
         }
-        
-        if (prevDigSensorValMiddle != digSensorValMiddle)
+
+        if (prevLineSensorValMiddle != lineSensorValMiddle)
         {
-            sprintf(stringBuffer, "M Sensor %d -> %d Analog %d", prevDigSensorValMiddle, digSensorValMiddle, algSensorValMiddle);
+            sprintf(stringBuffer, "M Sensor %d -> %d Analog %d", prevLineSensorValMiddle, lineSensorValMiddle, analogSensorValMiddle);
             Serial.println(stringBuffer);
-            prevDigSensorValMiddle = digSensorValMiddle;
+            prevLineSensorValMiddle = lineSensorValMiddle;
         }
-        
-        if (prevDigSensorValRight != digSensorValRight)
+
+        if (prevLineSensorValRight != lineSensorValRight)
         {
             // report both the left and the right sensor data
-            sprintf(stringBuffer, "R Sensor %d -> %d Analog %d", prevDigSensorValRight, digSensorValRight, algSensorValRight);
+            sprintf(stringBuffer, "R Sensor %d -> %d Analog %d", prevLineSensorValRight, lineSensorValRight, analogSensorValRight);
             Serial.println(stringBuffer);
-            prevDigSensorValRight = digSensorValRight;
-            sprintf(stringBuffer, "L Sensor        %d Analog %d", digSensorValLeft, algSensorValLeft);
+            prevLineSensorValRight = lineSensorValRight;
+            sprintf(stringBuffer, "L Sensor        %d Analog %d", lineSensorValLeft, analogSensorValLeft);
             Serial.println(stringBuffer);
         }
 
