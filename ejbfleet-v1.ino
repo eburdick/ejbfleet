@@ -1,19 +1,22 @@
 /*
- * ejbfleet-v1.ino
- * 
- * Arduino code for Red Shift fleet bot challenge
- * 
- * Following along with students to discover the problems they will be encountering and to
- * get real experience I can use to help them. 
- * 
- * Modifications:
- * 
- * 3/1/21: adding this revision header. Code basically works on my test track. 
- * 
- * Next: Need to test on the real track. Need to add a mechanism for recognising 
- * the end of the course, assuming the robot gets there. Experiment with reading 
- * the line sensors as analog signals to provide more control over corrections.
- */
+    ejbfleet-v1.ino
+
+    Arduino code for Red Shift fleet bot challenge
+
+    Following along with students to discover the problems they will be encountering and to
+    get real experience I can use to help them.
+
+    Modifications:
+
+    3/1/21 2pm: adding this revision header. Code basically works on my test track.
+
+    Next: Need to test on the real track. Need to add a mechanism for recognising
+    the end of the course, assuming the robot gets there. Experiment with reading
+    the line sensors as analog signals to provide more control over corrections.
+
+    3/1/21 7pm: added code for test mode that reports line sensor digital and 
+    analog values when it discovers a digital state change.
+*/
 #include <Wire.h>
 #include <Adafruit_MotorShield.h>
 #include <Adafruit_MPU6050.h>
@@ -86,8 +89,6 @@ const int buttonPort = 52;     // Push button input port
 
 const int digLineSensorPortRight = 53;
 const int digLineSensorPortLeft = 49;
-const int digLineSensorPortRightOuter = 47;
-const int digLineSensorPortLeftOuter = 45;
 
 const int digLineSensorPortMiddle = 51; // crossing line sensor
 
@@ -96,10 +97,8 @@ const int digLineSensorPortMiddle = 51; // crossing line sensor
 const int algLightSensorPort = A0;    // for tunnel lights
 
 const int algLineSensorPortLeft = A1;
-const int algLineSensorPortLeftOuter = A6;
 const int algLineSensorPortMiddle = A2;
 const int algLineSensorPortRight = A3;
-const int algLineSensorPortRightOuter = A7;
 
 // Readability constants -- so we dont have to remember on, off, light, dark, pressed and unpressed
 
@@ -150,6 +149,22 @@ CleanEdge buttonReader = CleanEdge(buttonPort, buttonDebounceDelay, unpressed);
 CleanEdge centerLineSensorReader = CleanEdge(digLineSensorPortMiddle, middleLineSensorEdgeDelay, light);
 
 /*******************************************************Working Global State********************/
+
+// Line sensor values. These are used in setup() and loop()
+int digSensorValLeft;
+int digSensorValMiddle;
+int digSensorValRight;
+int algSensorValLeft;
+int algSensorValMiddle;
+int algSensorValRight;
+
+// Previous sensor values. Used when we need to detect a change.
+int prevDigSensorValLeft;
+int prevDigSensorValMiddle;
+int prevDigSensorValRight;
+int prevAlgSensorValLeft;
+int prevAlgSensorValMiddle;
+int prevAlgSensorValRight;
 
 // Individual motor speed state.
 int LFMotorSpeed;
@@ -243,10 +258,28 @@ void SetSpeedRight(int speed)
 // This function makes the transition to test mode, which does nothing but activate all of the LEDs at this point.
 void ModeStartToTest()
 {
+    // Activate all of the LED indicators to indicate we are in test mode
     mode = modeTest;
     runLed.Enable();
     pauseLed.Enable();
     digitalWrite(ledPortYellow, ledOn);
+
+    //read all of the line sensors to initialize their state and initialize previous state.
+    //this is for sampling the analog values when the digital values change.
+    digSensorValLeft = digitalRead(digLineSensorPortLeft);
+    digSensorValMiddle = digitalRead(digLineSensorPortMiddle);
+    digSensorValRight = digitalRead(digLineSensorPortRight);
+    algSensorValLeft = analogRead(algLineSensorPortLeft);
+    algSensorValMiddle = analogRead(algLineSensorPortMiddle);
+    algSensorValRight = analogRead(algLineSensorPortRight);
+
+    prevDigSensorValLeft = digSensorValLeft;
+    prevDigSensorValMiddle = digSensorValMiddle;
+    prevDigSensorValRight = digSensorValRight;
+    prevAlgSensorValLeft = algSensorValLeft;
+    prevAlgSensorValMiddle = algSensorValMiddle;
+    prevAlgSensorValRight = algSensorValRight;
+
 }
 
 // Mode transition from start to standby. This is normally the starting mode.
@@ -415,18 +448,14 @@ void loop()
     //
     // read IR line sensors
     //
-    int digSensorValLeft = digitalRead(digLineSensorPortLeft);
-    int digSensorValLeftOuter = digitalRead(digLineSensorPortLeftOuter);
-    int digSensorValMiddle = digitalRead(digLineSensorPortMiddle);
-    int digSensorValRight = digitalRead(digLineSensorPortRight);
-    int digSensorValRightOuter = digitalRead(digLineSensorPortRightOuter);
-    int algSensorValLeft = analogRead(algLineSensorPortLeft);
-    int algSensorValLeftOuter = analogRead(algLineSensorPortLeftOuter);
-    int algSensorValMiddle = analogRead(algLineSensorPortMiddle);
-    int algSensorValRight = analogRead(algLineSensorPortRight);
-    int algSensorValRightOuter = analogRead(algLineSensorPortRightOuter);
+    digSensorValLeft = digitalRead(digLineSensorPortLeft);
+    digSensorValMiddle = digitalRead(digLineSensorPortMiddle);
+    digSensorValRight = digitalRead(digLineSensorPortRight);
+    algSensorValLeft = analogRead(algLineSensorPortLeft);
+    algSensorValMiddle = analogRead(algLineSensorPortMiddle);
+    algSensorValRight = analogRead(algLineSensorPortRight);
 
-                              
+
     // resd ambient light sensor. Turn on headlights on at the low light threshold and off
     // at the high light threshold
     //
@@ -436,7 +465,7 @@ void loop()
     {
         digitalWrite(ledPortWhite, ledOn);
     }
-    
+
     if (lightLevel > lightsOffThreshold)
     {
         digitalWrite(ledPortWhite, ledOff);
@@ -469,34 +498,34 @@ void loop()
                 1. If all three sensors (left right, middle) are dark, we assume we are crossing
                 the line. straight on. In this case, we do not correct.
                 2. If middle and right are dark, we assume we are hitting the cross line aiming left,
-                so we correct by turning right. 
+                so we correct by turning right.
                 3. if middle and left are dark, we assume we are hitting the cross line aiming right,
                 so we correct by turning left.
         */
 
         if (digSensorValLeft == dark && digSensorValRight == dark)
         {
-          // assumption is that if we see both sensors dark, then we are at a cross line and the 
-          // robot is going straight. 
+            // assumption is that if we see both sensors dark, then we are at a cross line and the
+            // robot is going straight.
             inCorrection = none;
         }
         else if (digSensorValLeft == dark && digSensorValMiddle == light)
         {
-          // road edge detected. Turn toward the center of the road.
+            // road edge detected. Turn toward the center of the road.
             inCorrection = left;
         }
         else if (digSensorValRight == dark && digSensorValMiddle == light) /*|| digSensorValRightOuter == dark*/
         {
-          // road edge detected. Turn toward the center of the road
+            // road edge detected. Turn toward the center of the road
             inCorrection = right;
         }
         else if (digSensorValRight == dark && digSensorValMiddle == dark)
         {
-          // crossing line aimed left. correct as if left sensor detected the left road edge
+            // crossing line aimed left. correct as if left sensor detected the left road edge
             inCorrection = left;
         }
         else if (digSensorValLeft == dark && digSensorValMiddle == dark)
-          // crossing line aimed right. Correct as if right sensor detected the right road edge
+            // crossing line aimed right. Correct as if right sensor detected the right road edge
             inCorrection = right;
         else
         {
@@ -650,8 +679,47 @@ void loop()
     else if (mode == modeTest)
     {
         //
-        // code for test mode empty for now
+        // code for test mode
         //
+        /*
+            Code for finding analog thresholds of line sensors. The hardware thresholds on the sensors are
+            adjusted via trimpots on the boards. This code watches each sensor's digital output and when it sees
+            a change, it reads the corresponing analog input and reports the transition and value via the
+            serial monitor. All of the sensors will have already been read at this point. We just have to recognise
+            that there has been a change since the last read and report both values when there is.
+        */
+        char stringBuffer[80];  // character array to assemble formatted strings using sprintf()
+
+        // Check each sensor digital state and report changes to the serial terminal along with the 
+        // analog values.
+        if (prevDigSensorValLeft != digSensorValLeft)
+        {
+            // report both the left and the right sensor data
+            sprintf(stringBuffer, "L Sensor %d -> %d Analog %d", prevDigSensorValLeft, digSensorValLeft, algSensorValLeft);
+            Serial.println(stringBuffer);
+            sprintf(stringBuffer, "R Sensor        %d Analog %d", digSensorValRight, algSensorValRight);
+            Serial.println(stringBuffer);
+            prevDigSensorValLeft = digSensorValLeft;
+        }
+        
+        if (prevDigSensorValMiddle != digSensorValMiddle)
+        {
+            sprintf(stringBuffer, "M Sensor %d -> %d Analog %d", prevDigSensorValMiddle, digSensorValMiddle, algSensorValMiddle);
+            Serial.println(stringBuffer);
+            prevDigSensorValMiddle = digSensorValMiddle;
+        }
+        
+        if (prevDigSensorValRight != digSensorValRight)
+        {
+            // report both the left and the right sensor data
+            sprintf(stringBuffer, "R Sensor %d -> %d Analog %d", prevDigSensorValRight, digSensorValRight, algSensorValRight);
+            Serial.println(stringBuffer);
+            prevDigSensorValRight = digSensorValRight;
+            sprintf(stringBuffer, "L Sensor        %d Analog %d", digSensorValLeft, algSensorValLeft);
+            Serial.println(stringBuffer);
+        }
+
+
     } // end of test
 
     /********************************************************************** Mode Standby Code **************/
