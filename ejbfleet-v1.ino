@@ -17,11 +17,14 @@
     3/1/21 7pm: added code for test mode that reports line sensor digital and
     analog values when it discovers a digital state change.
 
-    3/2/21 1:30am: Added code for analog sensing with software thresholds for 
+    3/2/21 1:30am: Added code for analog sensing with software thresholds for
     the line sensors. The crossing line detection is still using digital
-    sensing because it uses the clean edge class. May not change this. Added code 
+    sensing because it uses the clean edge class. May not change this. Added code
     for line counting and switch to standby at the end. Track
     testing seems to work.
+
+    3/2/21 11pm: Fixed up the formatting some to make the code more readable, including
+    ascii art block text. May do more later
 */
 #define ANALOGSENSING //using analog outputs of line sensors and software thresholds.
 
@@ -401,7 +404,10 @@ int previousCorrection;
 
         Mode state variable and constants...
 */
-
+/*                                        __  _ ___     _
+                                         (_  |_  | | | |_)
+                                         __) |_  | |_| |
+*/
 //
 // Initialize state, set up hardware, prepare starting state
 //
@@ -446,13 +452,17 @@ void setup()
         ModeStartToStandby();
     }
 }
-
-// Main loop. Poll sensors, execute mode specific code.
-//
+/*                                         _   _   _
+                                       |  / \ / \ |_)
+                                       |_ \_/ \_/ |
+*/
 void loop()
 {
+    /*                                      _   _   _  __    _  _   _   _
+                          /\  |  |    |\/| / \ | \ |_ (_    /  / \ | \ |_
+                         /--\ |_ |_   |  | \_/ |_/ |_ __)   \_ \_/ |_/ |_
+    */
 
-    /************************ Code for all modes reads the sensors, and turns on the headlights if it is dark. ***************/
     /*
         read IR line sensors, digital version. This just reads the digital value
         from the sensor, which sets its threshold with a trim pot.
@@ -554,7 +564,10 @@ void loop()
         Serial.println(lightLevel);
     */
 
-    /************************************************************************* Mode Run Code ******************/
+    /*                    _                   _   _   _    _  _   _   _
+                         |_) | | |\ |   |\/| / \ | \ |_   /  / \ | \ |_
+                         | \ |_| | \|   |  | \_/ |_/ |_   \_ \_/ |_/ |_
+    */
     if (mode == modeRun)
     {
         // update LED flasher
@@ -562,7 +575,9 @@ void loop()
 
 
         /*
-            Line following algorithm v1; There are two line sensors, one on the front right
+            ************************************Line following algorithm************************
+
+            There are two line sensors, one on the front right
             corner and one on the front left corner. When one of these sensors sees a line,
             it sets the wheels on the opposite side to slow way down or reverse, which causes
             the robot to turn away from the line. When the sensor stops seeing the line,
@@ -633,7 +648,7 @@ void loop()
         }
 
         /*
-             Line counting and crosswalk detection
+            ****************************Line counting and crosswalk detection***************************
 
             This code counts the lines crossed by the robot. Where the roadway crosses itself, we see lines
             crossing the road. At these points, we need to ignore the line following sensors, because the
@@ -642,10 +657,7 @@ void loop()
             crossing roadway boundary. These positions are designated as crosswalks and the robot needs to go
             into pause mode for three seconds at these points. There is also a double line at the end of the course,
             where we need to go into standby mode.
-        */
 
-
-        /*
             Cross walk detection. We use our cleanEdge object, centerLineSensorReader, to detect a
             light-dark-light cycle, then we look for another light-dark transition within a short time later.
             At this point, we should be just past a double cross line. Sequence of operations...
@@ -716,7 +728,6 @@ void loop()
                         // first line detect timeout to keep from detecting this line again.
                         firstLineBlockTimer.Start(seekFirstLineBlockTime);
                         crossLineState = seekingBlocked;
-
                     }
                     else if (doubleLineCount == totalDoubleLineCrossings)
                     {
@@ -770,8 +781,13 @@ void loop()
             // looking for lines again, so we do nothing. This will keep happening until the timer
             // expires.
         }
+        /*
+            Code past this point has calls to mode transitions. We put this at the end because the
+            transition functions called will return to here before the next mode is started, and
+            we don't want to execute any more consequential run mode code after this return.
+        */
 
-        /*****************Button Processing**********************/
+        /***********************************Button Processing********************************/
         //
         // Look for a button press and release. If we see it, then switch to standby mode.
         //
@@ -781,16 +797,20 @@ void loop()
             ModeRunToStandby();
         }
 
-        // check if we have passed the finish line. We want to run a couple of seconds after
-        // detecting the finish line before goint into pause mode.
+        /***********************************Finish Line Processing***************************/
+        // check if we have passed the finish line. and the fiish line timer has expired.
+        // We want to run long enough after
+        // detecting the finish line to fully pass it before going into pause mode.
         if (waitingForFinalStandby && finishLineTimer.Test())
         {
             //Serial.println("finish line");
             ModeRunToStandby();
         }
     } // end of run
-
-    /********************************************************************** Mode Test Code ******************/
+    /*                       ___ _  __ ___         _   _   _    _  _   _   _
+                              | |_ (_   |    |\/| / \ | \ |_   /  / \ | \ |_
+                              | |_ __)  |    |  | \_/ |_/ |_   \_ \_/ |_/ |_
+    */
     else if (mode == modeTest)
     {
         //
@@ -836,8 +856,10 @@ void loop()
 
 
     } // end of test
-
-    /********************************************************************** Mode Standby Code **************/
+    /*                       __ ___           _    _              _   _   _    _  _   _   _
+                            (_   |  /\  |\ | | \  |_) \_/   |\/| / \ | \ |_   /  / \ | \ |_
+                            __)  | /--\ | \| |_/  |_)  |    |  | \_/ |_/ |_   \_ \_/ |_/ |_
+    */
     else if (mode == modeStandby)
     {
         //
@@ -870,7 +892,11 @@ void loop()
         }
     } // end of standby
 
-    /******************************************************************************* Pause Mode Code **************/
+    /*                         _           __  _         _   _   _    _  _   _   _
+                              |_) /\  | | (_  |_   |\/| / \ | \ |_   /  / \ | \ |_
+                              |  /--\ |_| __) |_   |  | \_/ |_/ |_   \_ \_/ |_/ |_
+    */
+
     else if (mode == modePause)
     {
         //
