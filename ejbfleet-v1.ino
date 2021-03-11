@@ -25,17 +25,29 @@
 
     3/2/21 11pm: Fixed up the formatting some to make the code more readable, including
     ascii art block text. May do more later
+
+    3/10/21 9:30pm: Added more ascii art block text for sections of the code. Made
+    modifications to to support the addition of a data logger shield, changing the
+    I2C address of the MPU-6050, moving the button to pin 50 from 52, adding includes
+    for the real time clock and the SD Card functions.
 */
 #define ANALOGSENSING //using analog outputs of line sensors and software thresholds.
 
-#include <Wire.h>
+#include <Wire.h>               // I2C library
+#include <SD.h>                 // SD card library
+#include <SPI.h>                // Serial Peripheral Interface library
+#include <RTClib.h>             // Real Time Clock library
+//#include <EEPROM.h>           // EEPROM library
 #include <Adafruit_MotorShield.h>
-#include <Adafruit_MPU6050.h>
+#include <Adafruit_MPU6050.h>   // IMU library (accelerometers, gyros)
 #include "blinkled_class.hh"    //support code for blinking LEDs
 #include "timer_class.hh"       //support code for non-blocking timers
 #include "clean_edge_class.hh"  //support code for edge cleaned sensor reads
 
-/****************************************************Tweakable times and thresholds*******/
+/* ___      __ __           __   ___     __  __ __     __     __  __ 
+    | ||\/||_ (_    /\ |\ ||  \   | |__||__)|_ (_ |__|/  \|  |  \(_  
+    | ||  ||____)  /--\| \||__/   | |  || \ |____)|  |\__/|__|__/__) 
+*/                                                                  
 
 //Blinking LED on and off times
 long runLedOnTime  = 1000;
@@ -82,8 +94,14 @@ const int fastSideSpeed = 130;      // fixed high side speed for turning out of 
 const int lightsOnThreshold = 3;
 const int lightsOffThreshold = 9;
 
-
-/****************************************************Hardware related constants**********/
+/*          __  __          __  __   __ __      _____        ___ __ 
+   |__| /\ |__)|  \|  | /\ |__)|_   /  /  \|\ |(_  |  /\ |\ | | (_  
+   |  |/--\| \ |__/|/\|/--\| \ |__  \__\__/| \|__) | /--\| \| | __) 
+*/
+// I2C address for MPU-6050 is 0x69 to avoid a conflict with 0x68 used by the real time clock
+// of the data logging shield. In the hardware, this is done by tying AD0 of the MPU-6050 
+// HIGH. In the software, we pass this address to the imu.begin method. 
+const uint8_t imuI2Caddress = 0x69;
 
 // LED port definitions
 const int ledPortYellow = 25;  // Standby LED
@@ -91,7 +109,7 @@ const int ledPortRed = 27;     // Stop flasher LED
 const int ledPortGreen = 29;   // Run flasher LED
 const int ledPortWhite = 23;   // Headlight LEDs
 
-const int buttonPort = 52;     // Push button input port
+const int buttonPort = 50;     // Push button input port
 
 // IR line sensor port definitions
 
@@ -122,7 +140,10 @@ const int unpressed = HIGH;
 const int light = LOW;
 const int dark = HIGH;
 
-/**************************** C++ Object constructors ***************************************/
+/*  __  __     __ _____   __ __      _____ __      _____ __  __  __ 
+   /  \|__)  ||_ /   |   /  /  \|\ |(_  | |__)/  \/   | /  \|__)(_  
+   \__/|__)__)|__\__ |   \__\__/| \|__) | | \ \__/\__ | \__/| \ __) 
+*/                                                              
 
 // Construct a motor shield object with the default I2C address
 // and pointers to the four motors.
@@ -159,7 +180,17 @@ CleanEdge buttonReader = CleanEdge(buttonPort, buttonDebounceDelay, unpressed);
 // avoiding multiple counts at messy edges.
 CleanEdge centerLineSensorReader = CleanEdge(digLineSensorPortMiddle, middleLineSensorEdgeDelay, light);
 
-/*******************************************************Working Global State********************/
+// Accelerometer/gyro (IMU) interfaces
+Adafruit_MPU6050 imu;
+
+//declare imu sensor pointers
+Adafruit_Sensor *imuAccel;
+Adafruit_Sensor *imuGyro;
+
+/*      __  __          __    __     __  __           _____   ___ __ 
+   |  |/  \|__)|_/||\ |/ _   / _ |  /  \|__) /\ |    (_  |  /\ | |_  
+   |/\|\__/| \ | \|| \|\__)  \__)|__\__/|__)/--\|__  __) | /--\| |__ 
+*/                                                               
 
 // Line sensor values. These are used in setup() and loop()
 int lineSensorValLeft;
@@ -203,9 +234,10 @@ const int modeStandby = 2;    //standby mode for before and after the timed run
 const int modeRun = 3;        //run mode for the timed run
 const int modePause = 4;      //pause mode for crosswalk stops while in run mode
 
-
-/************************************************************Utility Functions******************/
-
+/*     ___     ___      __         _____  __      __ 
+   /  \ | ||  | | \_/  |_ /  \|\ |/   | |/  \|\ |(_  
+   \__/ | ||__| |  |   |  \__/| \|\__ | |\__/| \|__) 
+*/                                                  
 //
 // Functions for setting motor speeds on the left and right sides. These functions have a signed argument
 // so the motors can be reversed on a negative sign.
@@ -260,8 +292,6 @@ void SetSpeedRight(int speed)
     RFMotor->setSpeed(RFMotorSpeed);
     RRMotor->setSpeed(RRMotorSpeed);
 }
-
-
 
 /*
     Mode switching functions. When switching into the modes. These make the one time changes at the beginning of
@@ -413,6 +443,7 @@ int previousCorrection;
 //
 void setup()
 {
+  Serial.println("setup");
     // Start serial port for debugging
     Serial.begin(115200); // open the serial port at 115200 bps:
 
@@ -426,13 +457,22 @@ void setup()
     pinMode(ledPortYellow, OUTPUT);
     pinMode(ledPortGreen, OUTPUT);
     pinMode(ledPortRed, OUTPUT);
-
     //set up the button port
     pinMode(buttonPort, INPUT_PULLUP);
 
     // Start motor shield
     MotorShield.begin();
 
+
+    // Start IMU (Inertial Measurement Unit)
+    imu.begin(imuI2Caddress);
+    imuAccel = imu.getAccelerometerSensor();
+    imuAccel->printSensorDetails();
+    imuGyro = imu.getGyroSensor();
+    imuGyro->printSensorDetails();
+
+
+    
     // initialize inCorrection
     inCorrection = none;
     previousCorrection = none;
@@ -451,6 +491,7 @@ void setup()
     {
         ModeStartToStandby();
     }
+
 }
 /*                                         _   _   _
                                        |  / \ / \ |_)
@@ -463,6 +504,8 @@ void loop()
                          /--\ |_ |_   |  | \_/ |_/ |_ __)   \_ \_/ |_/ |_
     */
 
+//    digitalWrite(ledPortWhite,ledOff);
+Serial.println(mode);
     /*
         read IR line sensors, digital version. This just reads the digital value
         from the sensor, which sets its threshold with a trim pot.
