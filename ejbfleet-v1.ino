@@ -30,6 +30,15 @@
     modifications to to support the addition of a data logger shield, changing the
     I2C address of the MPU-6050, moving the button to pin 50 from 52, adding includes
     for the real time clock and the SD Card functions.
+
+    3/11/21 9:30pm: Added code for the real time clock and the SD card interface for 
+    data logging. Added real time clock test to the test mode code. None of this is 
+    doing anything yet, but today was devoted to trying out the libraries. Next step:
+    add some data logging code to capture the average angular velocity of the robot
+    and its tilt going up and down the ramps. The goal is to determine where we are
+    on the track by recording the turns, so we can prepare for upcoming difficult
+    turns during a run and speed up in the easy parts of the course. Using line count
+    and turn count should get us an accurate idea of where we are on the course.
 */
 #define ANALOGSENSING //using analog outputs of line sensors and software thresholds.
 
@@ -44,10 +53,10 @@
 #include "timer_class.hh"       //support code for non-blocking timers
 #include "clean_edge_class.hh"  //support code for edge cleaned sensor reads
 
-/* ___      __ __           __   ___     __  __ __     __     __  __ 
-    | ||\/||_ (_    /\ |\ ||  \   | |__||__)|_ (_ |__|/  \|  |  \(_  
-    | ||  ||____)  /--\| \||__/   | |  || \ |____)|  |\__/|__|__/__) 
-*/                                                                  
+/*  ___      __ __           __   ___     __  __ __     __     __  __
+    | ||\/||_ (_    /\ |\ ||  \   | |__||__)|_ (_ |__|/  \|  |  \(_
+    | ||  ||____)  /--\| \||__/   | |  || \ |____)|  |\__/|__|__/__)
+*/
 
 //Blinking LED on and off times
 long runLedOnTime  = 1000;
@@ -94,13 +103,13 @@ const int fastSideSpeed = 130;      // fixed high side speed for turning out of 
 const int lightsOnThreshold = 3;
 const int lightsOffThreshold = 9;
 
-/*          __  __          __  __   __ __      _____        ___ __ 
-   |__| /\ |__)|  \|  | /\ |__)|_   /  /  \|\ |(_  |  /\ |\ | | (_  
-   |  |/--\| \ |__/|/\|/--\| \ |__  \__\__/| \|__) | /--\| \| | __) 
+/*          __  __          __  __   __ __      _____        ___ __
+    |__| /\ |__)|  \|  | /\ |__)|_   /  /  \|\ |(_  |  /\ |\ | | (_
+    |  |/--\| \ |__/|/\|/--\| \ |__  \__\__/| \|__) | /--\| \| | __)
 */
 // I2C address for MPU-6050 is 0x69 to avoid a conflict with 0x68 used by the real time clock
-// of the data logging shield. In the hardware, this is done by tying AD0 of the MPU-6050 
-// HIGH. In the software, we pass this address to the imu.begin method. 
+// of the data logging shield. In the hardware, this is done by tying AD0 of the MPU-6050
+// HIGH. In the software, we pass this address to the imu.begin method.
 const uint8_t imuI2Caddress = 0x69;
 
 // LED port definitions
@@ -140,10 +149,10 @@ const int unpressed = HIGH;
 const int light = LOW;
 const int dark = HIGH;
 
-/*  __  __     __ _____   __ __      _____ __      _____ __  __  __ 
-   /  \|__)  ||_ /   |   /  /  \|\ |(_  | |__)/  \/   | /  \|__)(_  
-   \__/|__)__)|__\__ |   \__\__/| \|__) | | \ \__/\__ | \__/| \ __) 
-*/                                                              
+/*  __  __     __ _ ___   __ __      _____ __      _ ___ __  __  __
+    /  \|__)  ||_ /   |   /  /  \|\ |(_  | |__)/  \/   | /  \|__)(_
+    \__/|__)__)|__\__ |   \__\__/| \|__) | | \ \__/\__ | \__/| \ __)
+*/
 
 // Construct a motor shield object with the default I2C address
 // and pointers to the four motors.
@@ -187,10 +196,13 @@ Adafruit_MPU6050 imu;
 Adafruit_Sensor *imuAccel;
 Adafruit_Sensor *imuGyro;
 
-/*      __  __          __    __     __  __           _____   ___ __ 
-   |  |/  \|__)|_/||\ |/ _   / _ |  /  \|__) /\ |    (_  |  /\ | |_  
-   |/\|\__/| \ | \|| \|\__)  \__)|__\__/|__)/--\|__  __) | /--\| |__ 
-*/                                                               
+//Real time clock
+RTC_PCF8523 realTimeClock;
+
+/*      __  __          __    __     __  __           _____   ___ __
+    |  |/  \|__)|_/||\ |/ _   / _ |  /  \|__) /\ |    (_  |  /\ | |_
+    |/\|\__/| \ | \|| \|\__)  \__)|__\__/|__)/--\|__  __) | /--\| |__
+*/
 
 // Line sensor values. These are used in setup() and loop()
 int lineSensorValLeft;
@@ -234,10 +246,10 @@ const int modeStandby = 2;    //standby mode for before and after the timed run
 const int modeRun = 3;        //run mode for the timed run
 const int modePause = 4;      //pause mode for crosswalk stops while in run mode
 
-/*     ___     ___      __         _____  __      __ 
-   /  \ | ||  | | \_/  |_ /  \|\ |/   | |/  \|\ |(_  
-   \__/ | ||__| |  |   |  \__/| \|\__ | |\__/| \|__) 
-*/                                                  
+/*     ___     ___      __         _____  __      __
+    /  \ | ||  | | \_/  |_ /  \|\ |/   | |/  \|\ |(_
+    \__/ | ||__| |  |   |  \__/| \|\__ | |\__/| \|__)
+*/
 //
 // Functions for setting motor speeds on the left and right sides. These functions have a signed argument
 // so the motors can be reversed on a negative sign.
@@ -443,9 +455,12 @@ int previousCorrection;
 //
 void setup()
 {
-  Serial.println("setup");
     // Start serial port for debugging
     Serial.begin(115200); // open the serial port at 115200 bps:
+
+    // Start real time clock
+    realTimeClock.begin(); // connect real time clock to I2C bus
+    realTimeClock.start(); // clear the stop bit. Normally not necessary, but doesn't hurt.
 
     //
     //  set initial motor speed
@@ -472,7 +487,7 @@ void setup()
     imuGyro->printSensorDetails();
 
 
-    
+
     // initialize inCorrection
     inCorrection = none;
     previousCorrection = none;
@@ -502,11 +517,7 @@ void loop()
     /*                                      _   _   _  __    _  _   _   _
                           /\  |  |    |\/| / \ | \ |_ (_    /  / \ | \ |_
                          /--\ |_ |_   |  | \_/ |_/ |_ __)   \_ \_/ |_/ |_
-    */
 
-//    digitalWrite(ledPortWhite,ledOff);
-Serial.println(mode);
-    /*
         read IR line sensors, digital version. This just reads the digital value
         from the sensor, which sets its threshold with a trim pot.
     */
@@ -896,8 +907,29 @@ Serial.println(mode);
             sprintf(stringBuffer, "L Sensor        %d Analog %d", lineSensorValLeft, analogSensorValLeft);
             Serial.println(stringBuffer);
         }
-
-
+        
+        // test real time clock every 5 seconds. Borrowing the pause mode timer for the non-blocking delay.
+        if (pauseTimer.Test())
+        {
+            pauseTimer.Start(5000); // set timer to 5 seconds
+            char daysOfTheWeek[7][12] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
+            //Serial.println("Real Time Clock check...");
+            DateTime now = realTimeClock.now();
+            Serial.print(now.year(), DEC);
+            Serial.print('/');
+            Serial.print(now.month(), DEC);
+            Serial.print('/');
+            Serial.print(now.day(), DEC);
+            Serial.print(" (");
+            Serial.print(daysOfTheWeek[now.dayOfTheWeek()]);
+            Serial.print(") ");
+            Serial.print(now.hour(), DEC);
+            Serial.print(':');
+            Serial.print(now.minute(), DEC);
+            Serial.print(':');
+            Serial.print(now.second(), DEC);
+            Serial.println();
+        }
     } // end of test
     /*                       __ ___           _    _              _   _   _    _  _   _   _
                             (_   |  /\  |\ | | \  |_) \_/   |\/| / \ | \ |_   /  / \ | \ |_
