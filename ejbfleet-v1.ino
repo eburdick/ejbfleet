@@ -39,6 +39,9 @@
     on the track by recording the turns, so we can prepare for upcoming difficult
     turns during a run and speed up in the easy parts of the course. Using line count
     and turn count should get us an accurate idea of where we are on the course.
+
+    3/12/21 9:50pm: moved digital inputs 50-53 down to 45-49 to eliminate conflicts
+    with the ICSP pins used for SPI communication with the data logger shield.
 */
 #define ANALOGSENSING //using analog outputs of line sensors and software thresholds.
 
@@ -118,14 +121,13 @@ const int ledPortRed = 27;     // Stop flasher LED
 const int ledPortGreen = 29;   // Run flasher LED
 const int ledPortWhite = 23;   // Headlight LEDs
 
-const int buttonPort = 50;     // Push button input port
+const int buttonPort = 48;     // Push button input port
 
 // IR line sensor port definitions
 
-const int digLineSensorPortRight = 53;
-const int digLineSensorPortLeft = 49;
-
-const int digLineSensorPortMiddle = 51; // crossing line sensor
+const int digLineSensorPortRight = 49;
+const int digLineSensorPortLeft = 45;
+const int digLineSensorPortMiddle = 47; //crossing line sensor
 
 // Analog ports (note A4 and A5 are used by I2C, so we can't use them for this.)
 
@@ -149,7 +151,7 @@ const int unpressed = HIGH;
 const int light = LOW;
 const int dark = HIGH;
 
-/*  __  __     __ _ ___   __ __      _____ __      _ ___ __  __  __
+/*   __  __     __ _ ___   __ __      _____ __      _ ___ __  __  __
     /  \|__)  ||_ /   |   /  /  \|\ |(_  | |__)/  \/   | /  \|__)(_
     \__/|__)__)|__\__ |   \__\__/| \|__) | | \ \__/\__ | \__/| \ __)
 */
@@ -199,7 +201,7 @@ Adafruit_Sensor *imuGyro;
 //Real time clock
 RTC_PCF8523 realTimeClock;
 
-/*      __  __          __    __     __  __           _____   ___ __
+/*       __  __          __    __     __  __           _____   ___ __
     |  |/  \|__)|_/||\ |/ _   / _ |  /  \|__) /\ |    (_  |  /\ | |_
     |/\|\__/| \ | \|| \|\__)  \__)|__\__/|__)/--\|__  __) | /--\| |__
 */
@@ -246,7 +248,7 @@ const int modeStandby = 2;    //standby mode for before and after the timed run
 const int modeRun = 3;        //run mode for the timed run
 const int modePause = 4;      //pause mode for crosswalk stops while in run mode
 
-/*     ___     ___      __         _____  __      __
+/*      ___     ___      __         _____  __      __
     /  \ | ||  | | \_/  |_ /  \|\ |/   | |/  \|\ |(_
     \__/ | ||__| |  |   |  \__/| \|\__ | |\__/| \|__)
 */
