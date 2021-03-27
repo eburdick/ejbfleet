@@ -31,8 +31,8 @@
     I2C address of the MPU-6050, moving the button to pin 50 from 52, adding includes
     for the real time clock and the SD Card functions.
 
-    3/11/21 9:30pm: Added code for the real time clock and the SD card interface for 
-    data logging. Added real time clock test to the test mode code. None of this is 
+    3/11/21 9:30pm: Added code for the real time clock and the SD card interface for
+    data logging. Added real time clock test to the test mode code. None of this is
     doing anything yet, but today was devoted to trying out the libraries. Next step:
     add some data logging code to capture the average angular velocity of the robot
     and its tilt going up and down the ramps. The goal is to determine where we are
@@ -42,6 +42,12 @@
 
     3/12/21 9:50pm: moved digital inputs 50-53 down to 45-49 to eliminate conflicts
     with the ICSP pins used for SPI communication with the data logger shield.
+
+    3/15/21 Switched to a different library for MPU6050 IMU and removed most code written
+    to the old one. Reinstalled RTClib. Not sure what happened to it.
+
+    3/27/21 Added code to support a two digit seven segment LED display
+
 */
 #define ANALOGSENSING //using analog outputs of line sensors and software thresholds.
 
@@ -51,12 +57,12 @@
 #include <RTClib.h>             // Real Time Clock library
 //#include <EEPROM.h>           // EEPROM library
 #include <Adafruit_MotorShield.h>
-#include <Adafruit_MPU6050.h>   // IMU library (accelerometers, gyros)
+#include <MPU6050.h>   // IMU library (accelerometers, gyros) from https://github.com/jarzebski/Arduino-MPU6050
 #include "blinkled_class.hh"    //support code for blinking LEDs
 #include "timer_class.hh"       //support code for non-blocking timers
 #include "clean_edge_class.hh"  //support code for edge cleaned sensor reads
 
-/*  ___      __ __           __   ___     __  __ __     __     __  __
+/* ___      __ __           __   ___     __  __ __     __     __  __
     | ||\/||_ (_    /\ |\ ||  \   | |__||__)|_ (_ |__|/  \|  |  \(_
     | ||  ||____)  /--\| \||__/   | |  || \ |____)|  |\__/|__|__/__)
 */
@@ -106,7 +112,11 @@ const int fastSideSpeed = 130;      // fixed high side speed for turning out of 
 const int lightsOnThreshold = 3;
 const int lightsOffThreshold = 9;
 
-/*          __  __          __  __   __ __      _____        ___ __
+// Milliseconds between digit refresh for the seven segment display. The full refresh time is
+// twice this number because there are two digits.
+const int displayRefreshPeriod = 13;
+
+/*           __  __          __  __   __ __      _____        ___ __
     |__| /\ |__)|  \|  | /\ |__)|_   /  /  \|\ |(_  |  /\ |\ | | (_
     |  |/--\| \ |__/|/\|/--\| \ |__  \__\__/| \|__) | /--\| \| | __)
 */
@@ -120,6 +130,18 @@ const int ledPortYellow = 25;  // Standby LED
 const int ledPortRed = 27;     // Stop flasher LED
 const int ledPortGreen = 29;   // Run flasher LED
 const int ledPortWhite = 23;   // Headlight LEDs
+
+const int ledPort7SegTop = 36;        //    --
+const int ledPort7SegUpperLeft = 34;  //  |
+const int ledPort7SegUpperRight = 35; //       |
+const int ledPort7SegCenter = 40;     //    --
+const int ledPort7SegLowerLeft = 39;  //  |
+const int ledPort7SegLowerRight = 37; //       |
+const int ledPort7SegBottom = 41;     //    --
+const int ledPort7SegPoint = 38;      //           .
+
+const int ledPort7SegAnodeOnes = 32;
+const int ledPort7SegAnodeTens = 33;
 
 const int buttonPort = 48;     // Push button input port
 
@@ -180,9 +202,19 @@ Timer finishLineTimer = Timer();
 // create pause timer. This is used to time pause mode.
 Timer pauseTimer = Timer();
 
+// create general purpost timer for testing
+Timer testTimer = Timer();
+
 // create timers for crossing line and double line detection
 Timer firstLineBlockTimer = Timer(); //timer for getting off of the line after a pause
 Timer secondLineTimer = Timer();  //timer for establishing a window for detecting second line.
+
+// IMU gyro sample timer
+Timer imuGyroTimer = Timer();
+
+// Seven segment display refresh timer
+Timer displayRefreshTimer = Timer();
+//boolean showOnes = true; //display ones place if true
 
 // CleanEdge object for button. Initial button state unpressed.
 CleanEdge buttonReader = CleanEdge(buttonPort, buttonDebounceDelay, unpressed);
@@ -192,11 +224,9 @@ CleanEdge buttonReader = CleanEdge(buttonPort, buttonDebounceDelay, unpressed);
 CleanEdge centerLineSensorReader = CleanEdge(digLineSensorPortMiddle, middleLineSensorEdgeDelay, light);
 
 // Accelerometer/gyro (IMU) interfaces
-Adafruit_MPU6050 imu;
+MPU6050 imu;
 
-//declare imu sensor pointers
-Adafruit_Sensor *imuAccel;
-Adafruit_Sensor *imuGyro;
+
 
 //Real time clock
 RTC_PCF8523 realTimeClock;
@@ -248,10 +278,103 @@ const int modeStandby = 2;    //standby mode for before and after the timed run
 const int modeRun = 3;        //run mode for the timed run
 const int modePause = 4;      //pause mode for crosswalk stops while in run mode
 
+// IMU globals (accelerometer, gyro)
+
+float timeStep = 0.01;      //Sample time for gyro rate incremental integration in seconds
+long imuTimeStep = timeStep * 1000; //timeStep for sample timer in milliseconds
+// Pitch, Roll and Yaw values
+float pitch = 0;
+float roll = 0;
+float yaw = 0;
+
 /*      ___     ___      __         _____  __      __
     /  \ | ||  | | \_/  |_ /  \|\ |/   | |/  \|\ |(_
     \__/ | ||__| |  |   |  \__/| \|\__ | |\__/| \|__)
 */
+
+/*
+    Display a number between 0 and 99 on the two digit seven segment display. This function is
+    designed to be called every time around the loop when it is in use. between calls, the display
+    will be static, displaying the most recent result. Because this function alternates between the
+    digits for numbers greating than 9, not calling it regularly will result it only one digit
+    being displayed.
+*/
+void DisplayCount(int num)
+{
+    int digit;
+    static boolean showOnes = true; //display ones place if trued.
+
+    /*
+        Set array to define which segments to turn on for each digit. A zero in the array
+        corresponds to a segment being lit. Entry 10 of the array turns off all segments.
+            0
+          1   2
+            3
+          4   5
+            6
+    */
+
+    uint8_t segments[11][7] =
+    {
+        {0, 0, 0, 1, 0, 0, 0},  //0
+        {1, 1, 0, 1, 1, 0, 1},  //1
+        {0, 1, 0, 0, 0, 1, 0},  //2
+        {0, 1, 0, 0, 1, 0, 0},  //3
+        {1, 0, 0, 0, 1, 0, 1},  //4
+        {0, 0, 1, 0, 1, 0, 0},  //5
+        {0, 0, 1, 0, 0, 0, 0},  //6
+        {0, 1, 0, 1, 1, 0, 1},  //7
+        {0, 0, 0, 0, 0, 0, 0},  //8
+        {0, 0, 0, 0, 1, 0, 0},  //9
+        {1, 1, 1, 1, 1, 1, 1}   //blank
+    };
+
+    // deal with illegal values. We just take the absolute value and truncate to two digits,
+    // so the value will always be between zero and 99.
+    num  = abs(num % 100);
+
+    // If the number is only one digit, force showOnes to true.
+    if (num <= 9)
+    {
+        showOnes = true;
+    }
+    // We update the display and then skip the update for some length of time, using the
+    // display time. When the timer expires, we update the other digit and wait again.
+    if (displayRefreshTimer.Test())
+    {
+        // The display is a common anode device. The anodes are pulled up by PNP transistors
+        // driven low.
+        //
+        if (showOnes)
+        {
+            digit = num % 10; // base 10 integer remainder (modulus)
+            digitalWrite(ledPort7SegAnodeOnes, LOW);
+            digitalWrite(ledPort7SegAnodeTens, HIGH);
+            showOnes = false;
+        }
+        else
+        {
+            digit = num / 10;
+            if (digit == 0)
+            {
+                digit = 10; // causes blank display (no leading zero)
+            }
+
+            digitalWrite(ledPort7SegAnodeOnes, HIGH);
+            digitalWrite(ledPort7SegAnodeTens, LOW);
+            showOnes = true;
+        }
+        digitalWrite(ledPort7SegTop, segments[digit][0]);
+        digitalWrite(ledPort7SegUpperLeft, segments[digit][1]);
+        digitalWrite(ledPort7SegUpperRight, segments[digit][2]);
+        digitalWrite(ledPort7SegCenter, segments[digit][3]);
+        digitalWrite(ledPort7SegLowerLeft, segments[digit][4]);
+        digitalWrite(ledPort7SegLowerRight, segments[digit][5]);
+        digitalWrite(ledPort7SegBottom, segments[digit][6]);
+        digitalWrite(ledPort7SegPoint, HIGH); // decimal point always off
+        displayRefreshTimer.Start(displayRefreshPeriod);
+    }
+}
 //
 // Functions for setting motor speeds on the left and right sides. These functions have a signed argument
 // so the motors can be reversed on a negative sign.
@@ -421,7 +544,8 @@ const int left = -1;
 int inCorrection = none;
 int previousCorrection;
 
-
+// test stuff
+int count = 0;
 
 /*
       There are four system modes...
@@ -474,21 +598,30 @@ void setup()
     pinMode(ledPortYellow, OUTPUT);
     pinMode(ledPortGreen, OUTPUT);
     pinMode(ledPortRed, OUTPUT);
+
+    pinMode(ledPort7SegTop, OUTPUT);
+    pinMode(ledPort7SegUpperLeft, OUTPUT);
+    pinMode(ledPort7SegUpperRight, OUTPUT);
+    pinMode(ledPort7SegCenter, OUTPUT);
+    pinMode(ledPort7SegLowerLeft, OUTPUT);
+    pinMode(ledPort7SegLowerRight, OUTPUT);
+    pinMode(ledPort7SegBottom, OUTPUT);
+    pinMode(ledPort7SegPoint, OUTPUT);
+    pinMode(ledPort7SegAnodeOnes, OUTPUT);
+    pinMode(ledPort7SegAnodeTens, OUTPUT);
+
+
+
     //set up the button port
     pinMode(buttonPort, INPUT_PULLUP);
 
     // Start motor shield
     MotorShield.begin();
 
-
-    // Start IMU (Inertial Measurement Unit)
-    imu.begin(imuI2Caddress);
-    imuAccel = imu.getAccelerometerSensor();
-    imuAccel->printSensorDetails();
-    imuGyro = imu.getGyroSensor();
-    imuGyro->printSensorDetails();
-
-
+    // Start IMU (Inertial Measurement Unit) with scale and range settings, for I2C address 0x69
+    imu.begin(MPU6050_SCALE_2000DPS, MPU6050_RANGE_2G, 0x69);
+    imu.calibrateGyro();    // Calibrate gyroscope. The calibration must be at rest.
+    imu.setThreshold(1);    // Set threshold sensivty. Default 3.
 
     // initialize inCorrection
     inCorrection = none;
@@ -880,57 +1013,102 @@ void loop()
             that there has been a change since the last read and report both values when there is.
         */
         char stringBuffer[80];  // character array to assemble formatted strings using sprintf()
+        /*
+                // Check each line sensor digital state and report changes to the serial terminal along with the
+                // analog values.
+                if (prevLineSensorValLeft != lineSensorValLeft)
+                {
+                    // report both the left and the right sensor data
+                    sprintf(stringBuffer, "L Sensor %d -> %d Analog %d", prevLineSensorValLeft, lineSensorValLeft, analogSensorValLeft);
+                    Serial.println(stringBuffer);
+                    sprintf(stringBuffer, "R Sensor        %d Analog %d", lineSensorValRight, analogSensorValRight);
+                    Serial.println(stringBuffer);
+                    prevLineSensorValLeft = lineSensorValLeft;
+                }
 
-        // Check each sensor digital state and report changes to the serial terminal along with the
-        // analog values.
-        if (prevLineSensorValLeft != lineSensorValLeft)
-        {
-            // report both the left and the right sensor data
-            sprintf(stringBuffer, "L Sensor %d -> %d Analog %d", prevLineSensorValLeft, lineSensorValLeft, analogSensorValLeft);
-            Serial.println(stringBuffer);
-            sprintf(stringBuffer, "R Sensor        %d Analog %d", lineSensorValRight, analogSensorValRight);
-            Serial.println(stringBuffer);
-            prevLineSensorValLeft = lineSensorValLeft;
-        }
+                if (prevLineSensorValMiddle != lineSensorValMiddle)
+                {
+                    sprintf(stringBuffer, "M Sensor %d -> %d Analog %d", prevLineSensorValMiddle, lineSensorValMiddle, analogSensorValMiddle);
+                    Serial.println(stringBuffer);
+                    prevLineSensorValMiddle = lineSensorValMiddle;
+                }
 
-        if (prevLineSensorValMiddle != lineSensorValMiddle)
-        {
-            sprintf(stringBuffer, "M Sensor %d -> %d Analog %d", prevLineSensorValMiddle, lineSensorValMiddle, analogSensorValMiddle);
-            Serial.println(stringBuffer);
-            prevLineSensorValMiddle = lineSensorValMiddle;
-        }
+                if (prevLineSensorValRight != lineSensorValRight)
+                {
+                    // report both the left and the right sensor data
+                    sprintf(stringBuffer, "R Sensor %d -> %d Analog %d", prevLineSensorValRight, lineSensorValRight, analogSensorValRight);
+                    Serial.println(stringBuffer);
+                    prevLineSensorValRight = lineSensorValRight;
+                    sprintf(stringBuffer, "L Sensor        %d Analog %d", lineSensorValLeft, analogSensorValLeft);
+                    Serial.println(stringBuffer);
+                }
 
-        if (prevLineSensorValRight != lineSensorValRight)
+                // test real time clock every 5 seconds. Borrowing the pause mode timer for the non-blocking delay.
+                if (pauseTimer.Test())
+                {
+                    pauseTimer.Start(5000); // set timer to 5 seconds
+                    char daysOfTheWeek[7][12] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
+                    //Serial.println("Real Time Clock check...");
+                    DateTime now = realTimeClock.now();
+                    Serial.print(now.year(), DEC);
+                    Serial.print('/');
+                    Serial.print(now.month(), DEC);
+                    Serial.print('/');
+                    Serial.print(now.day(), DEC);
+                    Serial.print(" (");
+                    Serial.print(daysOfTheWeek[now.dayOfTheWeek()]);
+                    Serial.print(") ");
+                    Serial.print(now.hour(), DEC);
+                    Serial.print(':');
+                    Serial.print(now.minute(), DEC);
+                    Serial.print(':');
+                    Serial.print(now.second(), DEC);
+                    Serial.println();
+            }
+        */
+        /*
+            Gyro test code. We sample the gyro every timeStep seconds. The value we sample if
+            an angular rate. We multiply that by the timeStep to turn the rate into an angle
+            change, and add that to an accumulating value, which starts out at zero. Roughly
+            speaking, we are integrating the angular velocity over time to yield an angular
+            displacement. This will drift over time due to cumulative rounding error, but we
+            will try it out and see how well it works.
+        */
+        /*
+                if (imuGyroTimer.Test()) // check if timer has reached its limit
+                {
+                    // Read normalized values
+                    Vector norm = imu.readNormalizeGyro(); //vector to receive 3D gyro readings.
+
+                    // Calculate Pitch, Roll and Yaw (rough incremental rate integration)
+                    //pitch = pitch + norm.YAxis * timeStep;
+                    //roll = roll + norm.XAxis * timeStep;
+                    yaw = yaw + norm.ZAxis * timeStep;
+
+                    // Output raw
+                    //Serial.print(" Pitch = ");
+                    //Serial.print(pitch);
+                    //Serial.print(" Roll = ");
+                    //Serial.print(roll);
+                    Serial.print(" Yaw = ");
+                    Serial.println(yaw);
+
+                    // Wait to full timeStep period
+                    //delay((timeStep * 1000) - (millis() - timer));
+                    imuGyroTimer.Start(imuTimeStep); // start timer with time step delay
+                }
+        */
+        /*
+            test seven segment display. DisplayCount is called every cycle, but the
+            number to display is changed every second or so.
+        */
+
+        DisplayCount(count);
+        if (testTimer.Test())
         {
-            // report both the left and the right sensor data
-            sprintf(stringBuffer, "R Sensor %d -> %d Analog %d", prevLineSensorValRight, lineSensorValRight, analogSensorValRight);
-            Serial.println(stringBuffer);
-            prevLineSensorValRight = lineSensorValRight;
-            sprintf(stringBuffer, "L Sensor        %d Analog %d", lineSensorValLeft, analogSensorValLeft);
-            Serial.println(stringBuffer);
-        }
-        
-        // test real time clock every 5 seconds. Borrowing the pause mode timer for the non-blocking delay.
-        if (pauseTimer.Test())
-        {
-            pauseTimer.Start(5000); // set timer to 5 seconds
-            char daysOfTheWeek[7][12] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
-            //Serial.println("Real Time Clock check...");
-            DateTime now = realTimeClock.now();
-            Serial.print(now.year(), DEC);
-            Serial.print('/');
-            Serial.print(now.month(), DEC);
-            Serial.print('/');
-            Serial.print(now.day(), DEC);
-            Serial.print(" (");
-            Serial.print(daysOfTheWeek[now.dayOfTheWeek()]);
-            Serial.print(") ");
-            Serial.print(now.hour(), DEC);
-            Serial.print(':');
-            Serial.print(now.minute(), DEC);
-            Serial.print(':');
-            Serial.print(now.second(), DEC);
-            Serial.println();
+            testTimer.Start(1000);
+            count++;
+            //Serial.println(count);
         }
     } // end of test
     /*                       __ ___           _    _              _   _   _    _  _   _   _
