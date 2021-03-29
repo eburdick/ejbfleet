@@ -48,6 +48,11 @@
 
     3/27/21 Added code to support a two digit seven segment LED display
 
+    3/28/21 Code cleanup, add call to update seven segment display with cross line
+    count. Next step, add turn detection and course segment code, so that robot speed
+    and turn speed can be customized for each turn. This will have to be tuned on 
+    the real course.
+
 */
 #define ANALOGSENSING //using analog outputs of line sensors and software thresholds.
 
@@ -62,46 +67,47 @@
 #include "timer_class.hh"       //support code for non-blocking timers
 #include "clean_edge_class.hh"  //support code for edge cleaned sensor reads
 
-/* ___      __ __           __   ___     __  __ __     __     __  __
+/*
+    Global variables and constants. Most of these could be put into functions functions
+    as local static variables, but it is easier to keep track of them as globals.
+*/
+/*  ___      __ __           __   ___     __  __ __     __     __  __
     | ||\/||_ (_    /\ |\ ||  \   | |__||__)|_ (_ |__|/  \|  |  \(_
     | ||  ||____)  /--\| \||__/   | |  || \ |____)|  |\__/|__|__/__)
 */
 
 //Blinking LED on and off times
-long runLedOnTime  = 1000;
-long runLedOffTime = 1000;
-long pauseLedOnTime = 500;
-long pauseLedOffTime = 500;
+const long runLedOnTime  = 1000;
+const long runLedOffTime = 1000;
+const long pauseLedOnTime = 500;
+const long pauseLedOffTime = 500;
 
 // Button debounce time window
-unsigned int buttonDebounceDelay = 50;
+const unsigned int buttonDebounceDelay = 50;
 
 // middle line sensor edge cleaning delay
 const long middleLineSensorEdgeDelay = 20;
 
-// delay for passing the start/finish line at the end
+// delay for stopping after passing the start/finish line at the end
 const long finishLineDelay = 1000;
 
 // line sensor analog thresholds. Remember Dark is higher than light
-int thresholdRightDark = 600;
-int thresholdRightLight = 600;
-int thresholdLeftDark = 600;
-int thresholdLeftLight = 600;
-int thresholdMiddleDark = 600;
-int thresholdMiddleLight = 600;
-
-
-// double line detection delays
+const int thresholdRightDark = 600;
+const int thresholdRightLight = 600;
+const int thresholdLeftDark = 600;
+const int thresholdLeftLight = 600;
+const int thresholdMiddleDark = 600;
+const int thresholdMiddleLight = 600;
 
 //amount of time to look for second line of double line
 //after finding the first line.
 const int seekingSecondLineTimeWindow = 300; // .3 second
 
-// amount of time to stay in pause mode
-const int pauseModeDuration = 3000;  // 3 seconds
-
 //delay after return from pause to run before seeking line again.
 const int seekFirstLineBlockTime = 500;  // Half second
+
+// amount of time to stay in pause mode
+const int pauseModeDuration = 3000;  // 3 seconds
 
 //motor speeds for line following. Negative is reverse, and fastSideSpeed is the
 //straight drive speed of the robot.
@@ -112,9 +118,10 @@ const int fastSideSpeed = 130;      // fixed high side speed for turning out of 
 const int lightsOnThreshold = 3;
 const int lightsOffThreshold = 9;
 
-// Milliseconds between digit refresh for the seven segment display. The full refresh time is
-// twice this number because there are two digits.
-const int displayRefreshPeriod = 13;
+// The seven segment number display can display only one digit at a time,
+// so we switch back and forth between them every displayRefreshPeriod milliseconds
+const int displayRefreshPeriod = 13; //how often display switches between ones and tens place
+
 
 /*           __  __          __  __   __ __      _____        ___ __
     |__| /\ |__)|  \|  | /\ |__)|_   /  /  \|\ |(_  |  /\ |\ | | (_
@@ -191,30 +198,37 @@ Adafruit_DCMotor *LRMotor = MotorShield.getMotor(4);
 BlinkLed runLed(ledPortGreen, runLedOnTime, runLedOffTime);
 BlinkLed pauseLed(ledPortRed, pauseLedOnTime, pauseLedOffTime);
 
+// Global Timers. We could re-use some of these, but they are very light weight, so
+// the code is more readable if we have one for each purpose. Note there are some
+// static local timers in functions that use them exclusively. These are global because
+// they are used in loop() and in mode transition functions.
+
+// create pause timer. This is used to time pause mode.
+Timer pauseTimer = Timer();
+
 // create standby to run timer. This is to delay starting the
 // run at the beginning so the user has time to push the
 // button and leave the robot alone.
 Timer standbyToRunTimer = Timer();
 
-// create finish line timer to keep going a couple of seconds at the end.
-Timer finishLineTimer = Timer();
+// timer for real time clock test code
+Timer rtcTestTimer = Timer();
 
-// create pause timer. This is used to time pause mode.
-Timer pauseTimer = Timer();
-
-// create general purpost timer for testing
+// general purpose timer for test code
 Timer testTimer = Timer();
 
 // create timers for crossing line and double line detection
 Timer firstLineBlockTimer = Timer(); //timer for getting off of the line after a pause
 Timer secondLineTimer = Timer();  //timer for establishing a window for detecting second line.
 
+// Timer for refresh timing
+Timer displayRefreshTimer = Timer();
+
+// create finish line timer to keep going a second at the end.
+Timer finishLineTimer = Timer();
+
 // IMU gyro sample timer
 Timer imuGyroTimer = Timer();
-
-// Seven segment display refresh timer
-Timer displayRefreshTimer = Timer();
-//boolean showOnes = true; //display ones place if true
 
 // CleanEdge object for button. Initial button state unpressed.
 CleanEdge buttonReader = CleanEdge(buttonPort, buttonDebounceDelay, unpressed);
@@ -225,8 +239,6 @@ CleanEdge centerLineSensorReader = CleanEdge(digLineSensorPortMiddle, middleLine
 
 // Accelerometer/gyro (IMU) interfaces
 MPU6050 imu;
-
-
 
 //Real time clock
 RTC_PCF8523 realTimeClock;
@@ -278,6 +290,18 @@ const int modeStandby = 2;    //standby mode for before and after the timed run
 const int modeRun = 3;        //run mode for the timed run
 const int modePause = 4;      //pause mode for crosswalk stops while in run mode
 
+// Line following support state
+
+// correction directons. Signed integer so we can have multiple values if needed.
+const int none = 0;
+const int right = 1;
+const int left = -1;
+int inCorrection = none;
+int previousCorrection;
+
+// test stuff
+int count = 0;
+
 // IMU globals (accelerometer, gyro)
 
 float timeStep = 0.01;      //Sample time for gyro rate incremental integration in seconds
@@ -293,28 +317,34 @@ float yaw = 0;
 */
 
 /*
-    Display a number between 0 and 99 on the two digit seven segment display. This function is
+    Display a number between 0 and 99 or 0xFF on the two digit seven segment display. This function is
     designed to be called every time around the loop when it is in use. between calls, the display
     will be static, displaying the most recent result. Because this function alternates between the
-    digits for numbers greating than 9, not calling it regularly will result it only one digit
-    being displayed.
+    digits for numbers greating than 9 or 0xF, not calling it regularly will result in only one digit
+    being displayed. 
 */
 void DisplayCount(int num)
 {
+    int radix = 10;
+    int radixSquared = 100;
+    // uncomment to switch to base 16
+    //int radix = 16;
+    //int radixSquared = 256;
     int digit;
-    static boolean showOnes = true; //display ones place if trued.
+    static boolean showOnes = true; //display ones place if true, else display tens place
 
     /*
         Set array to define which segments to turn on for each digit. A zero in the array
-        corresponds to a segment being lit. Entry 10 of the array turns off all segments.
+        corresponds to a segment being lit. Entry 17 of the array turns off all segments.
             0
           1   2
             3
           4   5
             6
+
     */
 
-    uint8_t segments[11][7] =
+    uint8_t segments[17][7] =
     {
         {0, 0, 0, 1, 0, 0, 0},  //0
         {1, 1, 0, 1, 1, 0, 1},  //1
@@ -326,15 +356,22 @@ void DisplayCount(int num)
         {0, 1, 0, 1, 1, 0, 1},  //7
         {0, 0, 0, 0, 0, 0, 0},  //8
         {0, 0, 0, 0, 1, 0, 0},  //9
+        {0, 0, 0, 0, 0, 0, 1},  //A
+        {1, 0, 1, 0, 0, 0, 0},  //b
+        {0, 0, 1, 1, 0, 1, 0},  //C
+        {1, 1, 0, 0, 0, 0, 0},  //d
+        {0, 0, 1, 0, 0, 1, 0},  //E
+        {0, 0, 1, 0, 0, 1, 1},  //F
         {1, 1, 1, 1, 1, 1, 1}   //blank
     };
 
     // deal with illegal values. We just take the absolute value and truncate to two digits,
     // so the value will always be between zero and 99.
-    num  = abs(num % 100);
+    num  = abs(num % radixSquared);
 
-    // If the number is only one digit, force showOnes to true.
-    if (num <= 9)
+    // If the number is only one digit, force showOnes to true because the tens
+    // digit will always be blank.
+    if (num <= (radix-1))
     {
         showOnes = true;
     }
@@ -347,23 +384,23 @@ void DisplayCount(int num)
         //
         if (showOnes)
         {
-            digit = num % 10; // base 10 integer remainder (modulus)
-            digitalWrite(ledPort7SegAnodeOnes, LOW);
-            digitalWrite(ledPort7SegAnodeTens, HIGH);
-            showOnes = false;
+            digit = num % radix; // base radix integer remainder (modulus)
+            digitalWrite(ledPort7SegAnodeOnes, ledOn);
+            digitalWrite(ledPort7SegAnodeTens, ledOff);
+            showOnes = false; //set up for tens place next time
         }
         else
         {
-            digit = num / 10;
+            digit = num / radix;
             if (digit == 0)
             {
-                digit = 10; // causes blank display (no leading zero)
+                digit = 17; // causes blank display (no leading zero)
             }
-
-            digitalWrite(ledPort7SegAnodeOnes, HIGH);
-            digitalWrite(ledPort7SegAnodeTens, LOW);
-            showOnes = true;
+            digitalWrite(ledPort7SegAnodeOnes, ledOff);
+            digitalWrite(ledPort7SegAnodeTens, ledOn);
+            showOnes = true; //set up for ones place next time
         }
+        // Use the segments array to set segment port values.
         digitalWrite(ledPort7SegTop, segments[digit][0]);
         digitalWrite(ledPort7SegUpperLeft, segments[digit][1]);
         digitalWrite(ledPort7SegUpperRight, segments[digit][2]);
@@ -371,10 +408,13 @@ void DisplayCount(int num)
         digitalWrite(ledPort7SegLowerLeft, segments[digit][4]);
         digitalWrite(ledPort7SegLowerRight, segments[digit][5]);
         digitalWrite(ledPort7SegBottom, segments[digit][6]);
-        digitalWrite(ledPort7SegPoint, HIGH); // decimal point always off
+        digitalWrite(ledPort7SegPoint, ledOff); // decimal point always off
+
+        //start the refresh timer. No ports will be written until it times out.
         displayRefreshTimer.Start(displayRefreshPeriod);
     }
 }
+/*********************************************************************************************/
 //
 // Functions for setting motor speeds on the left and right sides. These functions have a signed argument
 // so the motors can be reversed on a negative sign.
@@ -430,12 +470,14 @@ void SetSpeedRight(int speed)
     RRMotor->setSpeed(RRMotorSpeed);
 }
 
-/*
-    Mode switching functions. When switching into the modes. These make the one time changes at the beginning of
-    each mode.
+/****************************************************************************************
+
+    Mode switching functions. When switching into the modes. These make the one
+    time changes at the transition from one mode to the next.
 */
 
-// This function makes the transition to test mode, which does nothing but activate all of the LEDs at this point.
+// This function makes the transition to test mode, which runs test code for code
+// debug and calibraton. It activates all leds to indicate it is in test mode.
 void ModeStartToTest()
 {
     // Activate all of the LED indicators to indicate we are in test mode
@@ -445,7 +487,8 @@ void ModeStartToTest()
     digitalWrite(ledPortYellow, ledOn);
 
     //read all of the line sensors to initialize their state and initialize previous state.
-    //this is for sampling the analog values when the digital values change.
+    //this is for sampling the analog values when the digital values change, part of
+    // calibration in test mode
     lineSensorValLeft = digitalRead(digLineSensorPortLeft);
     lineSensorValMiddle = digitalRead(digLineSensorPortMiddle);
     lineSensorValRight = digitalRead(digLineSensorPortRight);
@@ -472,7 +515,8 @@ void ModeStartToStandby()
 
 }
 
-// Mode transition from run to standby
+// Mode transition from run to standby, which happens when you push the
+// button in run mode or encounter the start/finish ine
 void ModeRunToStandby()
 {
     mode = modeStandby;
@@ -483,7 +527,7 @@ void ModeRunToStandby()
     SetSpeedLeft (0);
 }
 
-// Mode transition from pause to standby
+// Mode transition from pause to standby. Handles a button push during pause.
 void ModePauseToStandby()
 {
     mode = modeStandby;
@@ -494,7 +538,8 @@ void ModePauseToStandby()
     SetSpeedLeft (0);
 }
 
-// Mode transition from standby to run
+// Mode transition from standby to run. This transition happens after a delay after
+// you push the button in standby mode
 
 void ModeStandbyToRun()
 {
@@ -507,7 +552,7 @@ void ModeStandbyToRun()
     waitingForFinalStandby = false;
 }
 
-// Mode transition from pause to run
+// Mode transition from pause to run. This happens when the pause timer expires.
 void ModePauseToRun()
 {
     mode = modeRun;
@@ -516,7 +561,7 @@ void ModePauseToRun()
     firstLineBlockTimer.Start(seekFirstLineBlockTime);
 }
 
-// Mode transition from run to pause
+// Mode transition from run to pause. This happens when a double cross line is detected.
 void ModeRunToPause()
 {
     mode = modePause;
@@ -534,44 +579,32 @@ void ModeRunToPause()
     pauseTimer.Start(pauseModeDuration); // set timer to 3 seconds
 }
 
-/*
-    Line following support state
-*/
-// correction directons. Signed integer so we can have multiple values if needed.
-const int none = 0;
-const int right = 1;
-const int left = -1;
-int inCorrection = none;
-int previousCorrection;
-
-// test stuff
-int count = 0;
 
 /*
       There are four system modes...
 
-        Test mode (modeTest) is for testing sensors, etc. It is entered by holding down the button
-        during startup. Details TBD
+        Test mode (modeTest) is for testing sensors, calibrating, testing new code, etc. 
+        It is entered by holding down the button during startup.
 
-        Standby mode (modeStandby) is automatically entered at power on if the button is not being held down.
-        In standby, the yellow light is on to indicate the mode and all motors are stopped. Pushing the button
-        while in standby mode starts run mode.
+        Standby mode (modeStandby) is automatically entered at power on if the button is 
+        not being held down. In standby, the yellow light is on to indicate the mode and 
+        all motors are stopped. Pushing the button while in standby mode starts run mode.
 
-        Run mode (modeRun) is entered when the button is pushed while in standby mode. In this mode, the green light is
-        flashing and the autonomous
-        line following challenge is run until the end line is detected or the button is pushed, at which point the
-        mode switches back to standby mode. This mode also looks for a double line across the path and if it finds it, we
-        enter pause mode for three seconds.
+        Run mode (modeRun) is entered when the button is pushed while in standby mode. 
+        In this mode, the green light is flashing and the autonomous line following challenge  
+        is run until the end line is detected or the button is pushed, at which point the
+        mode switches back to standby mode. This mode also looks for a double line across 
+        the path and if it finds it, we enter pause mode for three seconds.
 
-        Pause mode (modePause) is entered from run mode. The motors stop, the red light flashes for .5 seconds on
-        and .5 seconds off for 3 seconds, then goes back run mode.
+        Pause mode (modePause) is entered from run mode. The motors stop, the red light 
+        flashes for .5 seconds on and .5 seconds off for 3 seconds, then goes back run mode.
 
-        For transitions between modes, there is a function for each type of transition; standby to run, run to pause,
-        run to standby, pause to run, pause to standby. These are called in the main loop when a mode needs to change,
-        and they provide a place for any action that needs to take place just once during a transition.
-
-        Mode state variable and constants...
+        For transitions between modes, there is a function for each type of transition;
+        standby to run, run to pause, run to standby, pause to run, pause to standby. 
+        These are called in the main loop when a mode needs to change, and they provide a 
+        place for any action that needs to take place just once during a transition.
 */
+
 /*                                        __  _ ___     _
                                          (_  |_  | | | |_)
                                          __) |_  | |_| |
@@ -610,38 +643,43 @@ void setup()
     pinMode(ledPort7SegAnodeOnes, OUTPUT);
     pinMode(ledPort7SegAnodeTens, OUTPUT);
 
-
-
-    //set up the button port
+    //set up input ports. Note the line sensors ports default to the mode we are
+    //setting, but I like to set them anyway.
     pinMode(buttonPort, INPUT_PULLUP);
-
+    pinMode(digLineSensorPortLeft, INPUT);
+    pinMode(digLineSensorPortMiddle, INPUT);
+    pinMode(digLineSensorPortRight, INPUT);
+    
     // Start motor shield
     MotorShield.begin();
 
     // Start IMU (Inertial Measurement Unit) with scale and range settings, for I2C address 0x69
     imu.begin(MPU6050_SCALE_2000DPS, MPU6050_RANGE_2G, 0x69);
     imu.calibrateGyro();    // Calibrate gyroscope. The calibration must be at rest.
-    imu.setThreshold(1);    // Set threshold sensivty. Default 3.
+    imu.setThreshold(1);    // Set threshold sensitivty. Default = 3.
 
-    // initialize inCorrection
+    // initialize inCorrection. These are used by the line following code
     inCorrection = none;
     previousCorrection = none;
 
+    // turn off seven segment display by deactivating both anodes
+    digitalWrite(ledPort7SegAnodeOnes, ledOff);
+    digitalWrite(ledPort7SegAnodeTens, ledOff);
+
     //
     // Read the button. If the button is pressed, set the mode to modeTest.
-    // if not pressed, set the mode to modeStandby. The test mode puts the system in test mode, which is for
-    // checking out the sensors, motors, and LEDs.
+    // if not pressed, set the mode to modeStandby. The test mode puts the 
+    // system in test mode, which is for checking out the sensors, motors, and LEDs,
+    // calibration procedures, and testing new code.
     //
     if (buttonReader.Sample() == pressed)
     {
-        //        EnterModeTest();
         ModeStartToTest();
     }
     else
     {
         ModeStartToStandby();
     }
-
 }
 /*                                         _   _   _
                                        |  / \ / \ |_)
@@ -748,11 +786,6 @@ void loop()
         digitalWrite(ledPortWhite, ledOff);
     }
 
-    /*  debug/calibration code
-        Serial.print("light level: ");
-        Serial.println(lightLevel);
-    */
-
     /*                    _                   _   _   _    _  _   _   _
                          |_) | | |\ |   |\/| / \ | \ |_   /  / \ | \ |_
                          | \ |_| | \|   |  | \_/ |_/ |_   \_ \_/ |_/ |_
@@ -762,9 +795,7 @@ void loop()
         // update LED flasher
         runLed.Update();
 
-
-        /*
-            ************************************Line following algorithm************************
+        /*************************************Line following algorithm************************
 
             There are two line sensors, one on the front right
             corner and one on the front left corner. When one of these sensors sees a line,
@@ -815,8 +846,9 @@ void loop()
             inCorrection = none;
         }
 
+        // end of line detection.  Result is setting inCorrection. The next code responds
+        // to that value
 
-        //respond to error condition
         if (inCorrection == left) // Correcting for left side line detection
         {
             // line has been detected on the left side. We want to turn right to clear the line
@@ -939,10 +971,6 @@ void loop()
 
                         crossLineState = seekingBlocked; // once we get back from pause mode, will block the sensor for a while.
                     }
-
-
-                    //Serial.println("Second line detected");
-                    //Serial.println(crossLineCount);
                 }
             }
             else
@@ -951,9 +979,6 @@ void loop()
                 //close enough to the first one, so there was only one line at this location.
 
                 crossLineState = seekingFirstLine; //start looking for the next line
-
-                //Serial.println("Second line not detected");
-                //Serial.println(crossLineCount);
             }
         }
         else if (firstLineBlockTimer.Test()) // crossLineState == seekingBlocked
@@ -961,8 +986,6 @@ void loop()
             // here we are not seeking the first or second line, but the timer we started to avoid double
             // counting the second line has expired, so we can start looking for a first line again.
             crossLineState = seekingFirstLine;
-
-            //Serial.println("firstLine Block complete");
         }
         else
         {
@@ -992,10 +1015,10 @@ void loop()
         // detecting the finish line to fully pass it before going into pause mode.
         if (waitingForFinalStandby && finishLineTimer.Test())
         {
-            //Serial.println("finish line");
             ModeRunToStandby();
         }
-    } // end of run
+        DisplayCount(crossLineCount);
+    } // end of run mode code
     /*                       ___ _  __ ___         _   _   _    _  _   _   _
                               | |_ (_   |    |\/| / \ | \ |_   /  / \ | \ |_
                               | |_ __)  |    |  | \_/ |_/ |_   \_ \_/ |_/ |_
@@ -1014,6 +1037,7 @@ void loop()
         */
         char stringBuffer[80];  // character array to assemble formatted strings using sprintf()
         /*
+                // For line sensor calibration
                 // Check each line sensor digital state and report changes to the serial terminal along with the
                 // analog values.
                 if (prevLineSensorValLeft != lineSensorValLeft)
@@ -1043,10 +1067,9 @@ void loop()
                     Serial.println(stringBuffer);
                 }
 
-                // test real time clock every 5 seconds. Borrowing the pause mode timer for the non-blocking delay.
-                if (pauseTimer.Test())
+                if (rtcTestTimer.Test())
                 {
-                    pauseTimer.Start(5000); // set timer to 5 seconds
+                    rtcTestTimer.Start(5000); // set timer to 5 seconds
                     char daysOfTheWeek[7][12] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
                     //Serial.println("Real Time Clock check...");
                     DateTime now = realTimeClock.now();
@@ -1067,7 +1090,7 @@ void loop()
             }
         */
         /*
-            Gyro test code. We sample the gyro every timeStep seconds. The value we sample if
+            Gyro test code. We sample the gyro every timeStep seconds. The value we sample is
             an angular rate. We multiply that by the timeStep to turn the rate into an angle
             change, and add that to an accumulating value, which starts out at zero. Roughly
             speaking, we are integrating the angular velocity over time to yield an angular
@@ -1099,17 +1122,20 @@ void loop()
                 }
         */
         /*
-            test seven segment display. DisplayCount is called every cycle, but the
-            number to display is changed every second or so.
+            Test seven segment display. DisplayCount is called every cycle, but the
+            number to display is changed every second or so. Note DisplayCount has its
+            own timer for its refresh rate, so a lot of times when it is called, it does
+            nothing but maintain the current display state.
         */
 
+        static int count = 0;
         DisplayCount(count);
         if (testTimer.Test())
         {
             testTimer.Start(1000);
             count++;
-            //Serial.println(count);
         }
+
     } // end of test
     /*                       __ ___           _    _              _   _   _    _  _   _   _
                             (_   |  /\  |\ | | \  |_) \_/   |\/| / \ | \ |_   /  / \ | \ |_
@@ -1124,6 +1150,10 @@ void loop()
         // The only thing this mode does is wait for the button to be cycled (pressed and released,) then it starts
         // a timer. When the timer period is finished, we go to run mode.
         //
+
+
+
+
         static boolean countdownToRun = false;  //static variable to hold state between calls to loop()
         if (countdownToRun)
         {
@@ -1159,8 +1189,8 @@ void loop()
         //
         pauseLed.Update();                       // update pause LED flasher object
 
-        boolean pauseDone = pauseTimer.Test();   //poll the pause timer
-        if (pauseDone)
+        //boolean pauseDone = pauseTimer.Test();   //poll the pause timer
+        if (pauseTimer.Test())
         {
             ModePauseToRun();
             //Serial.println("pause to run");
