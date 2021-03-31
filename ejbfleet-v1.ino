@@ -50,8 +50,31 @@
 
     3/28/21 Code cleanup, add call to update seven segment display with cross line
     count. Next step, add turn detection and course segment code, so that robot speed
-    and turn speed can be customized for each turn. This will have to be tuned on 
+    and turn speed can be customized for each turn. This will have to be tuned on
     the real course.
+
+    3/30/21 Added code to detect boundaries between turns and straight sections just 
+    using the correction variables in the line following code. For my little track, using
+    a .5 second time window and a 30 count threshold in that .5 second to determine in
+    a turn or not, I am getting five sections, which is what I would expect with a straight
+    section, then a left 90, another straight section, then a left 180, then a final
+    straight section. The real track will not work so well, because some transitions between
+    right and left gentle turns might count wrong. So I think I will use crossing lines and 
+    slopes to syncronize the count, dividing the track into subsections. 1: start to the 
+    first ramp. Nothing major to deal with there except maybe for the turn onto the up ramp.
+    2: the ramp, detected by the Y accelerometer, and the turn at the top. 3: the down ramp,
+    again detected by the Y accelerometer, the turn at the bottom, which is problematic
+    because of speeding up on the down slope (slow down there) and the long curve through
+    the tunnel to the first crosswalk. 4: from the first crosswalk to the second crosswalk.
+    5: from the second crosswalk through the lower part of the figure 8, ending at the first 
+    crossing line. 6: from that first crossing line, through the second one, and past the 
+    problematic abrupt right turn up to the next crossing line, just outside of the tunnel.
+    We can slow down approaching that nasty abrupt turn, detect the turn, and then speed 
+    back up. 7: the rest of the course. We can detect that last three 90 right turns and
+    maybe sprint on the tilted part and the stretch to the finish line. All of these sections
+    can use a combination of line counting, slope detection, and turn detection. I think
+    specialized code for each of these seven sections make sense with some fine grain speed
+    and turn tuning.
 
 */
 #define ANALOGSENSING //using analog outputs of line sensors and software thresholds.
@@ -121,6 +144,15 @@ const int lightsOffThreshold = 9;
 // The seven segment number display can display only one digit at a time,
 // so we switch back and forth between them every displayRefreshPeriod milliseconds
 const int displayRefreshPeriod = 13; //how often display switches between ones and tens place
+
+// The turn time bucket is the period of time we sample turn data before making a 
+// decision on whether to advance the section counter. This should be happening several 
+// times a second. The longer this period, the better smoothing we will have to avoid
+// local minima. Too long will make the section boundaries too inaccurate.
+const int turnTimeBucket = 500;
+// turn threshold is the number of correction events we count per time bucket to define
+// being in a turn. This number will go up with the size of the time bucket.
+const int turnThreshold = 30; 
 
 
 /*           __  __          __  __   __ __      _____        ___ __
@@ -199,9 +231,9 @@ BlinkLed runLed(ledPortGreen, runLedOnTime, runLedOffTime);
 BlinkLed pauseLed(ledPortRed, pauseLedOnTime, pauseLedOffTime);
 
 // Global Timers. We could re-use some of these, but they are very light weight, so
-// the code is more readable if we have one for each purpose. Note there are some
-// static local timers in functions that use them exclusively. These are global because
-// they are used in loop() and in mode transition functions.
+// the code is more readable if we have one for each purpose. Note some of these are only
+// used in one function, so they could be created there, but since we are using global
+// variables anyway, it is good to keep them all together for consistency.
 
 // create pause timer. This is used to time pause mode.
 Timer pauseTimer = Timer();
@@ -229,6 +261,10 @@ Timer finishLineTimer = Timer();
 
 // IMU gyro sample timer
 Timer imuGyroTimer = Timer();
+
+// Turn timer. This is for creating time buckets for sampling correction data
+// during turns.
+Timer turnTimer = Timer();
 
 // CleanEdge object for button. Initial button state unpressed.
 CleanEdge buttonReader = CleanEdge(buttonPort, buttonDebounceDelay, unpressed);
@@ -315,13 +351,112 @@ float yaw = 0;
     /  \ | ||  | | \_/  |_ /  \|\ |/   | |/  \|\ |(_
     \__/ | ||__| |  |   |  \__/| \|\__ | |\__/| \|__)
 */
+/*
+    Detect turns to divide the course into sections. The object is to detect the beginning and
+    end of each turn in the track and adjust speed, correction agressiveness, and possibly sensor
+    thresholds for each section. The theory is that tighter curves need more correction and gentler
+    curves need less, and that longer straight sections could allow for more speed. The minimum goal
+    is to anticipate difficult turns and slow down for them.
 
+    Curve detection mechanism: The simplest approach is to detect corrections and place the
+    boundaries at inflection points - places where correction changes between left and right, or
+    where correction becomes significantly less frequent going into straight sections. A good
+    measure might be the number of corrections per second all in the same direction, and maybe
+    the amount of time each correction lasts.
+
+    Alternative approach: use the gyro to measure the turns, keeping a running average to compensate
+    for the jerky nature of the corrections. Not sure whether there is an advantage here vs just
+    tracking corrections as above, but one might become apparent.
+
+    Implementation (method 1): Add a function that gets called from the main loop to...
+    1) expand the run constants, speed, inside correction speed, etc, into arrays with one
+       element per section. Each section will have a starting speed and an ending speed to
+       accomodate sprinting or slowing down on straight sections.
+    2) set a timer for each section to estimate the length of time to spend at the starting
+       speed. For some sections, this time might be used as a gate to detect the inflection
+       point that ends the section.
+    3) Copy the constants in the arrays to the regular global constants
+
+    To gauge when a turn starts and ends, we will break up the run into buckets of time and 
+    collect the number and direction of corrections in each bucket. When a bucket has a bunch
+    of right corrections and not many left corrections, we know that we are in a right correction
+    period, and vice versa for left corrections. When there are not many corrections in a bucket,
+    we know we are going pretty much straight. When there is a transition from one of these
+    situations to a different one, we add one to the section count.
+    
+    All of this is done by the function void UpdateCourseSection(), which is called from the
+    run mode code in the main loop.
+*/
+void UpdateCourseSection()
+{
+    static int section = 0;
+    static int previousCorrection;
+    static int currentCorrection;
+    static int leftCorrectionCount = 0;
+    static int rightCorrectionCount = 0;
+    static int inTurn = none;
+
+    // Accumulate correction data from the line follower sensors
+    if (inCorrection == right)
+    {
+        rightCorrectionCount++;
+    }
+    else if (inCorrection == left)
+    {
+        leftCorrectionCount++;
+    }
+    if (turnTimer.Test())
+    {
+       // time bucket is complete. We check our correction counts and compare
+       // with the turn threshold. If one is bigger, we are in a turn. 
+       if (rightCorrectionCount > turnThreshold)
+       {
+         // we are in a right turn. Check if this is the same as are last
+         // bucket result. If so, do nothing because this is part of the turn
+         // up to now. Otherwise, increment the section.
+         if (inTurn != right)
+         {
+          section++;
+          inTurn = right; // update inTurn value
+         }
+       }
+       else if (leftCorrectionCount > turnThreshold)
+       {
+        // same deal as right turn above
+        if (inTurn != left)
+        {
+          section++;
+          inTurn = left; 
+        }
+       }
+       else
+       {
+        // we are not in a turn. This is either because a turn has ended, or because
+        // we are continuing a straight section.
+        if (inTurn != none)
+        {
+          section++;
+          inTurn = none;
+        }
+       }
+       //Serial.print(leftCorrectionCount);
+       //Serial.print (" ");
+       //Serial.print(rightCorrectionCount);
+       //Serial.print (" ");
+       //Serial.println (section);
+       //We are going to start another time bucket with the counters set to zero.
+       leftCorrectionCount = 0;
+       rightCorrectionCount = 0;
+       turnTimer.Start(turnTimeBucket);
+    }
+    DisplayCount(section);
+}
 /*
     Display a number between 0 and 99 or 0xFF on the two digit seven segment display. This function is
     designed to be called every time around the loop when it is in use. between calls, the display
     will be static, displaying the most recent result. Because this function alternates between the
     digits for numbers greating than 9 or 0xF, not calling it regularly will result in only one digit
-    being displayed. 
+    being displayed.
 */
 void DisplayCount(int num)
 {
@@ -341,7 +476,6 @@ void DisplayCount(int num)
             3
           4   5
             6
-
     */
 
     uint8_t segments[17][7] =
@@ -371,7 +505,7 @@ void DisplayCount(int num)
 
     // If the number is only one digit, force showOnes to true because the tens
     // digit will always be blank.
-    if (num <= (radix-1))
+    if (num <= (radix - 1))
     {
         showOnes = true;
     }
@@ -413,6 +547,15 @@ void DisplayCount(int num)
         //start the refresh timer. No ports will be written until it times out.
         displayRefreshTimer.Start(displayRefreshPeriod);
     }
+}
+
+// function to update the seven segment display. This just calls the display function
+// above with a given variable. It is called at the beginning of the code for each non-test
+// mode, so we put it here so we can change what it displays in one place.
+void update7SegDisplay()
+{
+    // update the cross line count display
+    DisplayCount(crossLineCount);
 }
 /*********************************************************************************************/
 //
@@ -552,13 +695,18 @@ void ModeStandbyToRun()
     waitingForFinalStandby = false;
 }
 
-// Mode transition from pause to run. This happens when the pause timer expires.
+// Mode transition from pause to run. This happens when the pause timer expires
+// and we want to resume our run.
 void ModePauseToRun()
 {
     mode = modeRun;
     runLed.Enable();
     pauseLed.Disable();
+    //When we leave pause mode and go back to run, we may still be over the second
+    // line of the double line we paused for. To avoid double counting that line,
+    // we set the firstLineBlockTimer and block line seeking until it expires.
     firstLineBlockTimer.Start(seekFirstLineBlockTime);
+    crossLineState = seekingBlocked;
 }
 
 // Mode transition from run to pause. This happens when a double cross line is detected.
@@ -583,31 +731,31 @@ void ModeRunToPause()
 /*
       There are four system modes...
 
-        Test mode (modeTest) is for testing sensors, calibrating, testing new code, etc. 
+        Test mode (modeTest) is for testing sensors, calibrating, testing new code, etc.
         It is entered by holding down the button during startup.
 
-        Standby mode (modeStandby) is automatically entered at power on if the button is 
-        not being held down. In standby, the yellow light is on to indicate the mode and 
+        Standby mode (modeStandby) is automatically entered at power on if the button is
+        not being held down. In standby, the yellow light is on to indicate the mode and
         all motors are stopped. Pushing the button while in standby mode starts run mode.
 
-        Run mode (modeRun) is entered when the button is pushed while in standby mode. 
-        In this mode, the green light is flashing and the autonomous line following challenge  
+        Run mode (modeRun) is entered when the button is pushed while in standby mode.
+        In this mode, the green light is flashing and the autonomous line following challenge
         is run until the end line is detected or the button is pushed, at which point the
-        mode switches back to standby mode. This mode also looks for a double line across 
+        mode switches back to standby mode. This mode also looks for a double line across
         the path and if it finds it, we enter pause mode for three seconds.
 
-        Pause mode (modePause) is entered from run mode. The motors stop, the red light 
+        Pause mode (modePause) is entered from run mode. The motors stop, the red light
         flashes for .5 seconds on and .5 seconds off for 3 seconds, then goes back run mode.
 
         For transitions between modes, there is a function for each type of transition;
-        standby to run, run to pause, run to standby, pause to run, pause to standby. 
-        These are called in the main loop when a mode needs to change, and they provide a 
+        standby to run, run to pause, run to standby, pause to run, pause to standby.
+        These are called in the main loop when a mode needs to change, and they provide a
         place for any action that needs to take place just once during a transition.
 */
 
 /*                                        __  _ ___     _
-                                         (_  |_  | | | |_)
-                                         __) |_  | |_| |
+                                         (_  |_  | | | |_) /  \
+                                         __) |_  | |_| |   \  /
 */
 //
 // Initialize state, set up hardware, prepare starting state
@@ -649,7 +797,7 @@ void setup()
     pinMode(digLineSensorPortLeft, INPUT);
     pinMode(digLineSensorPortMiddle, INPUT);
     pinMode(digLineSensorPortRight, INPUT);
-    
+
     // Start motor shield
     MotorShield.begin();
 
@@ -658,9 +806,8 @@ void setup()
     imu.calibrateGyro();    // Calibrate gyroscope. The calibration must be at rest.
     imu.setThreshold(1);    // Set threshold sensitivty. Default = 3.
 
-    // initialize inCorrection. These are used by the line following code
+    // initialize inCorrection. This is used by the line following code
     inCorrection = none;
-    previousCorrection = none;
 
     // turn off seven segment display by deactivating both anodes
     digitalWrite(ledPort7SegAnodeOnes, ledOff);
@@ -668,7 +815,7 @@ void setup()
 
     //
     // Read the button. If the button is pressed, set the mode to modeTest.
-    // if not pressed, set the mode to modeStandby. The test mode puts the 
+    // if not pressed, set the mode to modeStandby. The test mode puts the
     // system in test mode, which is for checking out the sensors, motors, and LEDs,
     // calibration procedures, and testing new code.
     //
@@ -682,8 +829,8 @@ void setup()
     }
 }
 /*                                         _   _   _
-                                       |  / \ / \ |_)
-                                       |_ \_/ \_/ |
+                                       |  / \ / \ |_) /  \
+                                       |_ \_/ \_/ |   \  /
 */
 void loop()
 {
@@ -792,8 +939,10 @@ void loop()
     */
     if (mode == modeRun)
     {
-        // update LED flasher
-        runLed.Update();
+        runLed.Update(); // Update Run flasher.
+        //update7SegDisplay();
+        UpdateCourseSection();
+
 
         /*************************************Line following algorithm************************
 
@@ -920,10 +1069,6 @@ void loop()
                 // update state to start seeking second line and start the time window
                 crossLineState = seekingSecondLine;
                 secondLineTimer.Start(seekingSecondLineTimeWindow); //open time window for finding a second line
-
-                //Serial.println("First line detected");
-                //Serial.println(crossLineCount);
-
             }
             else
             {
@@ -934,18 +1079,21 @@ void loop()
         {
             if (!secondLineTimer.Test())
             {
-                //second line time window is still open. Read sensor for second line. Just looking for
-                //light-dark transition here because we want to switch to pause mode right away if we
-                //see it.
+                // Second line time window is still open. Read sensor for second line.
+                // Just looking for light-dark transition here because we want to switch
+                // to pause mode right away if we see it.
 
                 if (centerLineSensorReader.Sample() == dark)
                 {
-                    crossLineCount++; // count the second line
-                    doubleLineCount++; // count the double line
+                    // increment the cross line counts.
+                    crossLineCount++;
+                    doubleLineCount++;
+
+                    // set next mode based on the new line count...
 
                     if (doubleLineCount == 1)
                     {
-                        // Stay in run mode. This is the start of the course. But set the
+                        // Stay in run mode. This is the start of the course. But start the
                         // first line detect timeout to keep from detecting this line again.
                         firstLineBlockTimer.Start(seekFirstLineBlockTime);
                         crossLineState = seekingBlocked;
@@ -954,29 +1102,30 @@ void loop()
                     {
                         // double line is the start/finish line. Set the finish line timer and
                         // the state flag indicating we are at the finish line. When the timer
-                        // has expired, we will go into standby mode
+                        // has expired, we will stop the robot and go into standby mode
                         finishLineTimer.Start(finishLineDelay);
                         waitingForFinalStandby = true;
                         //
                         // Just to make sure we stop looking for crosslines and avoid finding
                         // this one again on the next time around the loop, we block line seeking
-                        // and start first line block timer.
+                        // and start first line block timer. This code is probably not needed.
                         firstLineBlockTimer.Start(seekFirstLineBlockTime);
                         crossLineState = seekingBlocked;
                     }
                     else if (doubleLineCount < totalDoubleLineCrossings)
                     {
-                        // double line is a crosswalk. Go to mode pause
-                        ModeRunToPause(); // switch mode to pause. Next call to loop() will be in pause state;
+                        // double line is a crosswalk. Transition to pause mode. The next call
+                        // to loop() will go to the pause mode code.
+                        ModeRunToPause();
 
-                        crossLineState = seekingBlocked; // once we get back from pause mode, will block the sensor for a while.
                     }
                 }
             }
             else
             {
-                //second line time window has expired. This means we have failed to find a second line,
-                //close enough to the first one, so there was only one line at this location.
+                // second line time window has expired. This means we have failed to find a
+                // second line, close enough to the first one, so there was only one line at
+                // this location and we can start looking for the next one.
 
                 crossLineState = seekingFirstLine; //start looking for the next line
             }
@@ -993,6 +1142,7 @@ void loop()
             // looking for lines again, so we do nothing. This will keep happening until the timer
             // expires.
         }
+
         /*
             Code past this point has calls to mode transitions. We put this at the end because the
             transition functions called will return to here before the next mode is started, and
@@ -1010,14 +1160,13 @@ void loop()
         }
 
         /***********************************Finish Line Processing***************************/
-        // check if we have passed the finish line. and the fiish line timer has expired.
+        // check if we have passed the finish line. and the finish line timer has expired.
         // We want to run long enough after
         // detecting the finish line to fully pass it before going into pause mode.
         if (waitingForFinalStandby && finishLineTimer.Test())
         {
             ModeRunToStandby();
         }
-        DisplayCount(crossLineCount);
     } // end of run mode code
     /*                       ___ _  __ ___         _   _   _    _  _   _   _
                               | |_ (_   |    |\/| / \ | \ |_   /  / \ | \ |_
@@ -1150,9 +1299,7 @@ void loop()
         // The only thing this mode does is wait for the button to be cycled (pressed and released,) then it starts
         // a timer. When the timer period is finished, we go to run mode.
         //
-
-
-
+        //update7SegDisplay();
 
         static boolean countdownToRun = false;  //static variable to hold state between calls to loop()
         if (countdownToRun)
@@ -1188,6 +1335,7 @@ void loop()
         // Pause mode code
         //
         pauseLed.Update();                       // update pause LED flasher object
+        //update7SegDisplay();
 
         //boolean pauseDone = pauseTimer.Test();   //poll the pause timer
         if (pauseTimer.Test())
