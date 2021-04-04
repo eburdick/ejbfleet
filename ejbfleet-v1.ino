@@ -90,6 +90,7 @@
 #include "timer_class.hh"       //support code for non-blocking timers
 #include "clean_edge_class.hh"  //support code for edge cleaned sensor reads
 
+
 /*
     Global variables and constants. Most of these could be put into functions functions
     as local static variables, but it is easier to keep track of them as globals.
@@ -153,6 +154,38 @@ const int turnTimeBucket = 500;
 // turn threshold is the number of correction events we count per time bucket to define
 // being in a turn. This number will go up with the size of the time bucket.
 const int turnThreshold = 30; 
+
+//
+// Course specific constants and state. This code divides the course into seven sections, and some 
+// sections are divided into subsections. The sections are numbered with two digits. The 
+// tens place is the main section number, and the ones place is the sub-section number.
+// as we sequence through the course, we update the section number and execute code 
+// corresponding to the current section.
+//
+int courseSection;
+// courseSection 1 constants (starting line to turn onto ramp)
+const int section11SprintSpeed = 200; // speed for starting line to first turn
+const int section11SprintTime = 1000; // duration of sprint time before starting turn
+const int section12FastSideSpeed = 160; // fast side speed for first turn (about 60 degrees right)
+const int section12SlowSideSpeed = -160; // slow side speed for first turn 
+const int section13FastSideSpeed = 160; // fast side speed for second turn (about 80 degrees right)
+const int section13slowSideSpeed = -160; // slow side speed for gentle turns
+const int section14FastSideSpeed  = 160; // fast side speed for third turn (about 80 degrees left)
+const int section14SlowSideSpeed = -160; // slow side speed for third turn 
+
+
+// courseSection 2 constants (turn onto ramp to turn at the top of the ramp)
+const int section21FastSideSpeed = 160; // fast side speed for turn onto ramp (abour 140 degrees right)
+const int sectoin21SlowSideSpeed = -160; // slow side speed for turn onto ramp
+const int section22SprintSpeed = 200; // speed up the ramp
+const int section22SprintTime = 500; // duration of sprint time before ramp turn
+
+// courseSection 3 contants (turn onto down ramp to turn onto tunnel approach)
+const int Section31FastSideSpeed = 160; // turn at top of ramp (90 degrees)
+const int Section31SlowSideSpeed = -160;
+const int section32SprintSpeed = 100; // speed down the ramp
+const int section32SprintTime = 800; // duration of sprint time before turn at bottom
+
 
 
 /*           __  __          __  __   __ __      _____        ___ __
