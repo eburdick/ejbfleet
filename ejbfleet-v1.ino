@@ -95,7 +95,7 @@
     Global variables and constants. Most of these could be put into functions functions
     as local static variables, but it is easier to keep track of them as globals.
 */
-/*  ___      __ __           __   ___     __  __ __     __     __  __
+/* ___      __ __           __   ___     __  __ __     __     __  __
     | ||\/||_ (_    /\ |\ ||  \   | |__||__)|_ (_ |__|/  \|  |  \(_
     | ||  ||____)  /--\| \||__/   | |  || \ |____)|  |\__/|__|__/__)
 */
@@ -164,27 +164,59 @@ const int turnThreshold = 30;
 //
 int courseSection;
 // courseSection 1 constants (starting line to turn onto ramp)
-const int section11SprintSpeed = 200; // speed for starting line to first turn
-const int section11SprintTime = 1000; // duration of sprint time before starting turn
-const int section12FastSideSpeed = 160; // fast side speed for first turn (about 60 degrees right)
-const int section12SlowSideSpeed = -160; // slow side speed for first turn 
-const int section13FastSideSpeed = 160; // fast side speed for second turn (about 80 degrees right)
-const int section13slowSideSpeed = -160; // slow side speed for gentle turns
-const int section14FastSideSpeed  = 160; // fast side speed for third turn (about 80 degrees left)
-const int section14SlowSideSpeed = -160; // slow side speed for third turn 
+const int sec11SprintSpeed = 200; // speed for starting line to first turn
+const int sec11SprintTime = 1000; // duration of sprint time before starting turn
+const int sec12FastSideSpeed = 160; // fast side speed for first turn right 60 degrees
+const int sec12SlowSideSpeed = -160; // slow side speed for first turn 
+const int sec13FastSideSpeed = 160; // fast side speed for second turn right 80 degrees
+const int sec13slowSideSpeed = -160; // slow side speed for gentle turns
+const int sec14FastSideSpeed  = 160; // fast side speed for third turn right 80 degrees
+const int sec14SlowSideSpeed = -160; // slow side speed for third turn 
 
 
 // courseSection 2 constants (turn onto ramp to turn at the top of the ramp)
-const int section21FastSideSpeed = 160; // fast side speed for turn onto ramp (abour 140 degrees right)
-const int sectoin21SlowSideSpeed = -160; // slow side speed for turn onto ramp
-const int section22SprintSpeed = 200; // speed up the ramp
-const int section22SprintTime = 500; // duration of sprint time before ramp turn
+const int sec21FastSideSpeed = 160; // fast side speed for turn onto ramp right 140 degrees
+const int sec21SlowSideSpeed = -160; // slow side speed for turn onto ramp
+const int sec22SprintSpeed = 200; // speed up the ramp
+const int sec22SprintTime = 500; // duration of sprint time before ramp turn
 
 // courseSection 3 contants (turn onto down ramp to turn onto tunnel approach)
-const int Section31FastSideSpeed = 160; // turn at top of ramp (90 degrees)
-const int Section31SlowSideSpeed = -160;
-const int section32SprintSpeed = 100; // speed down the ramp
-const int section32SprintTime = 800; // duration of sprint time before turn at bottom
+const int sec31FastSideSpeed = 160; // turn at top of ramp right 90 degrees
+const int sec31SlowSideSpeed = -160;
+const int sec32SprintSpeed = 100; // speed down the ramp
+const int sec32SprintTime = 800; // duration of sprint time before turn at bottom
+
+// courseSection 4 constants (turn onto tunnel approach, through tunnel to first crosswalk
+const int sec41FastSideSpeed = 160; // first turn at bottom of ramp right 90 degrees
+const int sec41SlowSideSpeed = -160;
+const int sec42SprintSpeed = 200; // short sprint after turn
+const int sec42SprintTime = 500;
+const int sec43FastSideSpeed = 160; // tunnel approach curve right 180 degrees
+const int sec43SlowSideSpeed = -160;
+const int sec44SprintSpeed = 200; // short sprint to first crosswalk
+const int sec44SprintTime = 300;
+
+// courseSection 5 constants (up to second crosswalk)
+const int sec51SprintSpeed = 200; // short sprint to turn
+const int sec51SprintTime = 200;
+const int sec52FastSideSpeed = 160; // first turn right 90 degrees
+const int sec52SlowSideSpeed = -160;
+const int sec53FastSideSpeed = 160; // dogleg right 45 degrees
+const int sec53SlowSideSpeed = -160;
+
+// courseSection 6 constants (bottom of figure 8 to second dogleg, passing three cross lines)
+const int sec61SprintSpeed = 200; // sprint to first turn
+const int sec61SprintTime = 300;
+const int sec62FastSideSpeed = 160; // first turn at bottom of fig 8 left 120 degrees
+const int sec62SlowSideSpeed = -160;
+const int sec63SprintSpeed = 200; // sprint to second turn
+const int sec63SprintTime = 300; 
+const int sec64FastSideSpeed = 160; // second turn at bottom of fig 8 left 160 degrees
+const int sec64SlowSideSpeed = -160; 
+const int sec65SprintSpeed = 200; // sprint to dogleg
+const int sec65SprintTime = 500;
+
+// courseSection 7 constants (
 
 
 
