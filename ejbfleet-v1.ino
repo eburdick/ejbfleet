@@ -76,6 +76,15 @@
     specialized code for each of these seven sections make sense with some fine grain speed
     and turn tuning.
 
+    4/16/21 Started working on a more robust way of subdividing the course, a refinement
+    of the discussion above. At this point, constants for speed, correction differentials
+    and delays for straight section sprints have been added assuming the track is divided
+    into eight sections with some subsections. Just starting to work on code to identify
+    and sequence the sections. Once that is done, the constants can be tuned on the real
+    track. The sections are pretty close to those described above, with section 7 
+    divided arbitrarily into sections 7, ending at the beginning of the banked section,
+    and section 8, from there to the finish line.
+
 */
 #define ANALOGSENSING //using analog outputs of line sensors and software thresholds.
 
@@ -164,7 +173,8 @@ const int turnThreshold = 30;
 //
 int courseSection;
 // courseSection 1 constants (starting line to turn onto ramp)
-const int sec11SprintSpeed = 200; // speed for starting line to first turn
+const int sec11FastSideSpeed = 200; // speed for starting line to first turn
+const int sec11SlowSideSpeed = 50; // gentle correction
 const int sec11SprintTime = 1000; // duration of sprint time before starting turn
 const int sec12FastSideSpeed = 160; // fast side speed for first turn right 60 degrees
 const int sec12SlowSideSpeed = -160; // slow side speed for first turn 
@@ -177,27 +187,32 @@ const int sec14SlowSideSpeed = -160; // slow side speed for third turn
 // courseSection 2 constants (turn onto ramp to turn at the top of the ramp)
 const int sec21FastSideSpeed = 160; // fast side speed for turn onto ramp right 140 degrees
 const int sec21SlowSideSpeed = -160; // slow side speed for turn onto ramp
-const int sec22SprintSpeed = 200; // speed up the ramp
+const int sec22FastSideSpeed = 200; // speed up the ramp
+const int sec22SlowSideSpeed = 50; // gentle correction
 const int sec22SprintTime = 500; // duration of sprint time before ramp turn
 
 // courseSection 3 contants (turn onto down ramp to turn onto tunnel approach)
 const int sec31FastSideSpeed = 160; // turn at top of ramp right 90 degrees
 const int sec31SlowSideSpeed = -160;
-const int sec32SprintSpeed = 100; // speed down the ramp
+const int sec32FastSideSpeed = 100; // speed down the ramp
+const int sec32SlowSideSpeed = 0; // gentle correction
 const int sec32SprintTime = 800; // duration of sprint time before turn at bottom
 
 // courseSection 4 constants (turn onto tunnel approach, through tunnel to first crosswalk
 const int sec41FastSideSpeed = 160; // first turn at bottom of ramp right 90 degrees
 const int sec41SlowSideSpeed = -160;
-const int sec42SprintSpeed = 200; // short sprint after turn
+const int sec42FastSideSpeed = 200; // short sprint after turn
+const int sec42SlowSideSpeed = 50; // gentle correction
 const int sec42SprintTime = 500;
 const int sec43FastSideSpeed = 160; // tunnel approach curve right 180 degrees
 const int sec43SlowSideSpeed = -160;
-const int sec44SprintSpeed = 200; // short sprint to first crosswalk
+const int sec44FastSideSpeed = 200; // short sprint to first crosswalk
+const int sec44SlowSideSpeed = 50; // gentle correction
 const int sec44SprintTime = 300;
 
 // courseSection 5 constants (up to second crosswalk)
-const int sec51SprintSpeed = 200; // short sprint to turn
+const int sec51FastSideSpeed = 200; // short sprint to turn
+const int sec51SlowSideSpeed = 50; // gentle correction
 const int sec51SprintTime = 200;
 const int sec52FastSideSpeed = 160; // first turn right 90 degrees
 const int sec52SlowSideSpeed = -160;
@@ -205,18 +220,42 @@ const int sec53FastSideSpeed = 160; // dogleg right 45 degrees
 const int sec53SlowSideSpeed = -160;
 
 // courseSection 6 constants (bottom of figure 8 to second dogleg, passing three cross lines)
-const int sec61SprintSpeed = 200; // sprint to first turn
-const int sec61SprintTime = 300;
+const int sec61FastSideSpeed = 200; // sprint to first turn
+const int sec61SlowSideSpeed = 50; // gentle correction
+const int sec61SprintTime = 500;
 const int sec62FastSideSpeed = 160; // first turn at bottom of fig 8 left 120 degrees
 const int sec62SlowSideSpeed = -160;
-const int sec63SprintSpeed = 200; // sprint to second turn
+const int sec63FastSideSpeed = 200; // sprint to second turn
+const int sec63SlowSideSpeed = 50; // gentle correction
 const int sec63SprintTime = 300; 
 const int sec64FastSideSpeed = 160; // second turn at bottom of fig 8 left 160 degrees
 const int sec64SlowSideSpeed = -160; 
-const int sec65SprintSpeed = 200; // sprint to dogleg
+const int sec65FastSideSpeed = 200; // sprint to dogleg
+const int sec65SlowSideSpeed = 50; // gentle correction
 const int sec65SprintTime = 500;
 
-// courseSection 7 constants (
+// courseSection 7 constants (detecting dogleg and turning right, passing two cross lines, then 90 degree right,
+// straight sprint up to turn onto banked section
+const int sec71FastSideSpeed = 160; // turning at dogleg
+const int sec71SlowSideSpeed = -200; // agressive turn
+const int sec72FastSideSpeed = 200; // sprint to 90 degree right
+const int sec72SlowSideSpeed = 50; // gentle correction
+const int sec72SprintTime = 1000;
+const int sec73FastSideSpeed = 200; // sprint to 90 degree right onto banked section
+const int sec73SlowSideSpeed = 50; // gentle correction
+const int sec73SprintTime = 500;
+
+//CourseSection 8 constants (turn onto banked section to finish line)
+const int sec81FastSideSpeed = 160; // turning onto banked section
+const int sec81SlowSideSpeed = -160;
+const int sec82FastSideSpeed = 200; // sprint on banked section
+const int sec82SlowSideSpeed = 50; // gentle correction
+const int sec82SprintTime = 2000; // long section
+const int sec83FastSideSpeed = 160; // final turn
+const int sec83SlowSideSpeed = -160;
+const int sec84FastSideSpeed = 200; // sprint to finish line
+const int sec84SlowSideSpeed = 50; // gentle correction
+const int sec84SprintTime = 2000; // this sprint ends at the finish line, so sprint time probably not needed.
 
 
 
@@ -1008,6 +1047,14 @@ void loop()
         //update7SegDisplay();
         UpdateCourseSection();
 
+        /*******************************Detect Course Segment*********************************
+
+            We start in segment 11 at the beginning of the course. Each section transition has a criterion
+            for advancing to the next section. For the straight sections, this is a timer, which will
+            need to track the time it takes to the next turn. For the turns, it is detection of the 
+            opposite road edge, eg a right turn ends when the right edge of the roadway is detected.
+            Some transitions are detected when a cross line is detected, like the first crosswalk.
+        */
 
         /*************************************Line following algorithm************************
 
@@ -1020,15 +1067,18 @@ void loop()
             - At places where the road crosses itself, there is a line that goes across the
             road. At that point, both line sensors will see a line. When that happens, we do
             not correct direction, but continue to go straight. This depends on the robot not
-            being at a significant angle when it encounters a cross line.
+            being at a significant angle when it encounters a cross line. Since all of the cross lines
+            are in straight sections, this should always work unless we have overcorrected just before
+            a cross line.
 
             - For cross lines, we have some special cases.
                 1. If all three sensors (left right, middle) are dark, we assume we are crossing
                 the line. straight on. In this case, we do not correct.
                 2. If middle and right are dark, we assume we are hitting the cross line aiming left,
-                so we correct by turning right.
+                so we correct by turning right. We may want to adjust relative left and right speeds
+                if this overcorrects.
                 3. if middle and left are dark, we assume we are hitting the cross line aiming right,
-                so we correct by turning left.
+                so we correct by turning left. See caveat above.
         */
 
         if (lineSensorValLeft == dark && lineSensorValRight == dark)
