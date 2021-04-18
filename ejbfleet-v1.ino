@@ -53,23 +53,23 @@
     and turn speed can be customized for each turn. This will have to be tuned on
     the real course.
 
-    3/30/21 Added code to detect boundaries between turns and straight sections just 
+    3/30/21 Added code to detect boundaries between turns and straight sections just
     using the correction variables in the line following code. For my little track, using
     a .5 second time window and a 30 count threshold in that .5 second to determine in
     a turn or not, I am getting five sections, which is what I would expect with a straight
     section, then a left 90, another straight section, then a left 180, then a final
     straight section. The real track will not work so well, because some transitions between
-    right and left gentle turns might count wrong. So I think I will use crossing lines and 
-    slopes to syncronize the count, dividing the track into subsections. 1: start to the 
+    right and left gentle turns might count wrong. So I think I will use crossing lines and
+    slopes to syncronize the count, dividing the track into subsections. 1: start to the
     first ramp. Nothing major to deal with there except maybe for the turn onto the up ramp.
     2: the ramp, detected by the Y accelerometer, and the turn at the top. 3: the down ramp,
     again detected by the Y accelerometer, the turn at the bottom, which is problematic
     because of speeding up on the down slope (slow down there) and the long curve through
     the tunnel to the first crosswalk. 4: from the first crosswalk to the second crosswalk.
-    5: from the second crosswalk through the lower part of the figure 8, ending at the first 
-    crossing line. 6: from that first crossing line, through the second one, and past the 
+    5: from the second crosswalk through the lower part of the figure 8, ending at the first
+    crossing line. 6: from that first crossing line, through the second one, and past the
     problematic abrupt right turn up to the next crossing line, just outside of the tunnel.
-    We can slow down approaching that nasty abrupt turn, detect the turn, and then speed 
+    We can slow down approaching that nasty abrupt turn, detect the turn, and then speed
     back up. 7: the rest of the course. We can detect that last three 90 right turns and
     maybe sprint on the tilted part and the stretch to the finish line. All of these sections
     can use a combination of line counting, slope detection, and turn detection. I think
@@ -81,20 +81,21 @@
     and delays for straight section sprints have been added assuming the track is divided
     into eight sections with some subsections. Just starting to work on code to identify
     and sequence the sections. Once that is done, the constants can be tuned on the real
-    track. The sections are pretty close to those described above, with section 7 
+    track. The sections are pretty close to those described above, with section 7
     divided arbitrarily into sections 7, ending at the beginning of the banked section,
     and section 8, from there to the finish line.
 
 */
-#define ANALOGSENSING //using analog outputs of line sensors and software thresholds.
+#define ANALOGSENSING  //using analog outputs of line sensors and software thresholds.
 
-#include <Wire.h>               // I2C library
-#include <SD.h>                 // SD card library
-#include <SPI.h>                // Serial Peripheral Interface library
-#include <RTClib.h>             // Real Time Clock library
+#include <arduino.h>
+#include <Wire.h>    // I2C library
+#include <SD.h>      // SD card library
+#include <SPI.h>     // Serial Peripheral Interface library
+#include <RTClib.h>  // Real Time Clock library
 //#include <EEPROM.h>           // EEPROM library
 #include <Adafruit_MotorShield.h>
-#include <MPU6050.h>   // IMU library (accelerometers, gyros) from https://github.com/jarzebski/Arduino-MPU6050
+#include <MPU6050.h>            // IMU library (accelerometers, gyros) from https://github.com/jarzebski/Arduino-MPU6050
 #include "blinkled_class.hh"    //support code for blinking LEDs
 #include "timer_class.hh"       //support code for non-blocking timers
 #include "clean_edge_class.hh"  //support code for edge cleaned sensor reads
@@ -104,13 +105,13 @@
     Global variables and constants. Most of these could be put into functions functions
     as local static variables, but it is easier to keep track of them as globals.
 */
-/* ___      __ __           __   ___     __  __ __     __     __  __
+/*  ___      __ __           __   ___     __  __ __     __     __  __
     | ||\/||_ (_    /\ |\ ||  \   | |__||__)|_ (_ |__|/  \|  |  \(_
     | ||  ||____)  /--\| \||__/   | |  || \ |____)|  |\__/|__|__/__)
 */
 
 //Blinking LED on and off times
-const long runLedOnTime  = 1000;
+const long runLedOnTime = 1000;
 const long runLedOffTime = 1000;
 const long pauseLedOnTime = 500;
 const long pauseLedOffTime = 500;
@@ -134,7 +135,7 @@ const int thresholdMiddleLight = 600;
 
 //amount of time to look for second line of double line
 //after finding the first line.
-const int seekingSecondLineTimeWindow = 300; // .3 second
+const int seekingSecondLineTimeWindow = 300;  // .3 second
 
 //delay after return from pause to run before seeking line again.
 const int seekFirstLineBlockTime = 500;  // Half second
@@ -142,120 +143,115 @@ const int seekFirstLineBlockTime = 500;  // Half second
 // amount of time to stay in pause mode
 const int pauseModeDuration = 3000;  // 3 seconds
 
-//motor speeds for line following. Negative is reverse, and fastSideSpeed is the
-//straight drive speed of the robot.
-const int slowSideSpeed = -130;       // fixed slow side speed for turning out of line error.
-const int fastSideSpeed = 130;      // fixed high side speed for turning out of line error.
-
 // Light sensor thresholds for turning the headlights on and off.
 const int lightsOnThreshold = 3;
 const int lightsOffThreshold = 9;
 
 // The seven segment number display can display only one digit at a time,
 // so we switch back and forth between them every displayRefreshPeriod milliseconds
-const int displayRefreshPeriod = 13; //how often display switches between ones and tens place
+const int displayRefreshPeriod = 13;  //how often display switches between ones and tens place
 
-// The turn time bucket is the period of time we sample turn data before making a 
-// decision on whether to advance the section counter. This should be happening several 
+// The turn time bucket is the period of time we sample turn data before making a
+// decision on whether to advance the section counter. This should be happening several
 // times a second. The longer this period, the better smoothing we will have to avoid
 // local minima. Too long will make the section boundaries too inaccurate.
 const int turnTimeBucket = 500;
 // turn threshold is the number of correction events we count per time bucket to define
 // being in a turn. This number will go up with the size of the time bucket.
-const int turnThreshold = 30; 
+const int turnThreshold = 30;
 
 //
-// Course specific constants and state. This code divides the course into seven sections, and some 
-// sections are divided into subsections. The sections are numbered with two digits. The 
+// Course specific constants and state. This code divides the course into seven sections, and some
+// sections are divided into subsections. The sections are numbered with two digits. The
 // tens place is the main section number, and the ones place is the sub-section number.
-// as we sequence through the course, we update the section number and execute code 
+// as we sequence through the course, we update the section number and execute code
 // corresponding to the current section.
 //
 int courseSection;
 // courseSection 1 constants (starting line to turn onto ramp)
-const int sec11FastSideSpeed = 200; // speed for starting line to first turn
-const int sec11SlowSideSpeed = 50; // gentle correction
-const int sec11SprintTime = 1000; // duration of sprint time before starting turn
-const int sec12FastSideSpeed = 160; // fast side speed for first turn right 60 degrees
-const int sec12SlowSideSpeed = -160; // slow side speed for first turn 
-const int sec13FastSideSpeed = 160; // fast side speed for second turn right 80 degrees
-const int sec13slowSideSpeed = -160; // slow side speed for gentle turns
-const int sec14FastSideSpeed  = 160; // fast side speed for third turn right 80 degrees
-const int sec14SlowSideSpeed = -160; // slow side speed for third turn 
+const int sec11FastSideSpeed = 200;   // speed for starting line to first turn
+const int sec11SlowSideSpeed = 50;    // gentle correction
+const int sec11SprintTime = 1000;     // duration of sprint time before starting turn
+const int sec12FastSideSpeed = 60;   // fast side speed for first turn right 60 degrees
+const int sec12SlowSideSpeed = -160;  // slow side speed for first turn
+const int sec13FastSideSpeed = 160;   // fast side speed for second turn right 80 degrees
+const int sec13SlowSideSpeed = -160;  // slow side speed for gentle turns
+const int sec14FastSideSpeed = 160;   // fast side speed for third turn right 80 degrees
+const int sec14SlowSideSpeed = -160;  // slow side speed for third turn
 
 
 // courseSection 2 constants (turn onto ramp to turn at the top of the ramp)
-const int sec21FastSideSpeed = 160; // fast side speed for turn onto ramp right 140 degrees
-const int sec21SlowSideSpeed = -160; // slow side speed for turn onto ramp
-const int sec22FastSideSpeed = 200; // speed up the ramp
-const int sec22SlowSideSpeed = 50; // gentle correction
-const int sec22SprintTime = 500; // duration of sprint time before ramp turn
+const int sec21FastSideSpeed = 160;   // fast side speed for turn onto ramp right 140 degrees
+const int sec21SlowSideSpeed = -160;  // slow side speed for turn onto ramp
+const int sec22FastSideSpeed = 200;   // speed up the ramp
+const int sec22SlowSideSpeed = 50;    // gentle correction
+const int sec22SprintTime = 500;      // duration of sprint time before ramp turn
 
 // courseSection 3 contants (turn onto down ramp to turn onto tunnel approach)
-const int sec31FastSideSpeed = 160; // turn at top of ramp right 90 degrees
+const int sec31FastSideSpeed = 160;  // turn at top of ramp right 90 degrees
 const int sec31SlowSideSpeed = -160;
-const int sec32FastSideSpeed = 100; // speed down the ramp
-const int sec32SlowSideSpeed = 0; // gentle correction
-const int sec32SprintTime = 800; // duration of sprint time before turn at bottom
+const int sec32FastSideSpeed = 100;  // speed down the ramp
+const int sec32SlowSideSpeed = 0;    // gentle correction
+const int sec32SprintTime = 800;     // duration of sprint time before turn at bottom
 
 // courseSection 4 constants (turn onto tunnel approach, through tunnel to first crosswalk
-const int sec41FastSideSpeed = 160; // first turn at bottom of ramp right 90 degrees
+const int sec41FastSideSpeed = 160;  // first turn at bottom of ramp right 90 degrees
 const int sec41SlowSideSpeed = -160;
-const int sec42FastSideSpeed = 200; // short sprint after turn
-const int sec42SlowSideSpeed = 50; // gentle correction
+const int sec42FastSideSpeed = 200;  // short sprint after turn
+const int sec42SlowSideSpeed = 50;   // gentle correction
 const int sec42SprintTime = 500;
-const int sec43FastSideSpeed = 160; // tunnel approach curve right 180 degrees
+const int sec43FastSideSpeed = 160;  // tunnel approach curve right 180 degrees
 const int sec43SlowSideSpeed = -160;
-const int sec44FastSideSpeed = 200; // short sprint to first crosswalk
-const int sec44SlowSideSpeed = 50; // gentle correction
+const int sec44FastSideSpeed = 200;  // short sprint to first crosswalk
+const int sec44SlowSideSpeed = 50;   // gentle correction
 const int sec44SprintTime = 300;
 
 // courseSection 5 constants (up to second crosswalk)
-const int sec51FastSideSpeed = 200; // short sprint to turn
-const int sec51SlowSideSpeed = 50; // gentle correction
+const int sec51FastSideSpeed = 200;  // short sprint to turn
+const int sec51SlowSideSpeed = 50;   // gentle correction
 const int sec51SprintTime = 200;
-const int sec52FastSideSpeed = 160; // first turn right 90 degrees
+const int sec52FastSideSpeed = 160;  // first turn right 90 degrees
 const int sec52SlowSideSpeed = -160;
-const int sec53FastSideSpeed = 160; // dogleg right 45 degrees
+const int sec53FastSideSpeed = 160;  // dogleg right 45 degrees
 const int sec53SlowSideSpeed = -160;
 
 // courseSection 6 constants (bottom of figure 8 to second dogleg, passing three cross lines)
-const int sec61FastSideSpeed = 200; // sprint to first turn
-const int sec61SlowSideSpeed = 50; // gentle correction
+const int sec61FastSideSpeed = 200;  // sprint to first turn
+const int sec61SlowSideSpeed = 50;   // gentle correction
 const int sec61SprintTime = 500;
-const int sec62FastSideSpeed = 160; // first turn at bottom of fig 8 left 120 degrees
+const int sec62FastSideSpeed = 160;  // first turn at bottom of fig 8 left 120 degrees
 const int sec62SlowSideSpeed = -160;
-const int sec63FastSideSpeed = 200; // sprint to second turn
-const int sec63SlowSideSpeed = 50; // gentle correction
-const int sec63SprintTime = 300; 
-const int sec64FastSideSpeed = 160; // second turn at bottom of fig 8 left 160 degrees
-const int sec64SlowSideSpeed = -160; 
-const int sec65FastSideSpeed = 200; // sprint to dogleg
-const int sec65SlowSideSpeed = 50; // gentle correction
+const int sec63FastSideSpeed = 200;  // sprint to second turn
+const int sec63SlowSideSpeed = 50;   // gentle correction
+const int sec63SprintTime = 300;
+const int sec64FastSideSpeed = 160;  // second turn at bottom of fig 8 left 160 degrees
+const int sec64SlowSideSpeed = -160;
+const int sec65FastSideSpeed = 200;  // sprint to dogleg
+const int sec65SlowSideSpeed = 50;   // gentle correction
 const int sec65SprintTime = 500;
 
 // courseSection 7 constants (detecting dogleg and turning right, passing two cross lines, then 90 degree right,
 // straight sprint up to turn onto banked section
-const int sec71FastSideSpeed = 160; // turning at dogleg
-const int sec71SlowSideSpeed = -200; // agressive turn
-const int sec72FastSideSpeed = 200; // sprint to 90 degree right
-const int sec72SlowSideSpeed = 50; // gentle correction
+const int sec71FastSideSpeed = 160;   // turning at dogleg
+const int sec71SlowSideSpeed = -200;  // agressive turn
+const int sec72FastSideSpeed = 200;   // sprint to 90 degree right
+const int sec72SlowSideSpeed = 50;    // gentle correction
 const int sec72SprintTime = 1000;
-const int sec73FastSideSpeed = 200; // sprint to 90 degree right onto banked section
-const int sec73SlowSideSpeed = 50; // gentle correction
+const int sec73FastSideSpeed = 200;  // sprint to 90 degree right onto banked section
+const int sec73SlowSideSpeed = 50;   // gentle correction
 const int sec73SprintTime = 500;
 
 //CourseSection 8 constants (turn onto banked section to finish line)
-const int sec81FastSideSpeed = 160; // turning onto banked section
+const int sec81FastSideSpeed = 160;  // turning onto banked section
 const int sec81SlowSideSpeed = -160;
-const int sec82FastSideSpeed = 200; // sprint on banked section
-const int sec82SlowSideSpeed = 50; // gentle correction
-const int sec82SprintTime = 2000; // long section
-const int sec83FastSideSpeed = 160; // final turn
+const int sec82FastSideSpeed = 200;  // sprint on banked section
+const int sec82SlowSideSpeed = 50;   // gentle correction
+const int sec82SprintTime = 2000;    // long section
+const int sec83FastSideSpeed = 160;  // final turn
 const int sec83SlowSideSpeed = -160;
-const int sec84FastSideSpeed = 200; // sprint to finish line
-const int sec84SlowSideSpeed = 50; // gentle correction
-const int sec84SprintTime = 2000; // this sprint ends at the finish line, so sprint time probably not needed.
+const int sec84FastSideSpeed = 200;  // sprint to finish line
+const int sec84SlowSideSpeed = 50;   // gentle correction
+const int sec84SprintTime = 2000;    // this sprint ends at the finish line, so sprint time probably not needed.
 
 
 
@@ -274,29 +270,29 @@ const int ledPortRed = 27;     // Stop flasher LED
 const int ledPortGreen = 29;   // Run flasher LED
 const int ledPortWhite = 23;   // Headlight LEDs
 
-const int ledPort7SegTop = 36;        //    --
-const int ledPort7SegUpperLeft = 34;  //  |
-const int ledPort7SegUpperRight = 35; //       |
-const int ledPort7SegCenter = 40;     //    --
-const int ledPort7SegLowerLeft = 39;  //  |
-const int ledPort7SegLowerRight = 37; //       |
-const int ledPort7SegBottom = 41;     //    --
-const int ledPort7SegPoint = 38;      //           .
+const int ledPort7SegTop = 36;         //    --
+const int ledPort7SegUpperLeft = 34;   //  |
+const int ledPort7SegUpperRight = 35;  //       |
+const int ledPort7SegCenter = 40;      //    --
+const int ledPort7SegLowerLeft = 39;   //  |
+const int ledPort7SegLowerRight = 37;  //       |
+const int ledPort7SegBottom = 41;      //    --
+const int ledPort7SegPoint = 38;       //           .
 
 const int ledPort7SegAnodeOnes = 32;
 const int ledPort7SegAnodeTens = 33;
 
-const int buttonPort = 48;     // Push button input port
+const int buttonPort = 48;  // Push button input port
 
 // IR line sensor port definitions
 
 const int digLineSensorPortRight = 49;
 const int digLineSensorPortLeft = 45;
-const int digLineSensorPortMiddle = 47; //crossing line sensor
+const int digLineSensorPortMiddle = 47;  //crossing line sensor
 
 // Analog ports (note A4 and A5 are used by I2C, so we can't use them for this.)
 
-const int analogLightSensorPort = A0;    // for tunnel lights
+const int analogLightSensorPort = A0;  // for tunnel lights
 
 const int analogLineSensorPortLeft = A1;
 const int analogLineSensorPortMiddle = A2;
@@ -354,8 +350,8 @@ Timer rtcTestTimer = Timer();
 Timer testTimer = Timer();
 
 // create timers for crossing line and double line detection
-Timer firstLineBlockTimer = Timer(); //timer for getting off of the line after a pause
-Timer secondLineTimer = Timer();  //timer for establishing a window for detecting second line.
+Timer firstLineBlockTimer = Timer();  //timer for getting off of the line after a pause
+Timer secondLineTimer = Timer();      //timer for establishing a window for detecting second line.
 
 // Timer for refresh timing
 Timer displayRefreshTimer = Timer();
@@ -369,6 +365,9 @@ Timer imuGyroTimer = Timer();
 // Turn timer. This is for creating time buckets for sampling correction data
 // during turns.
 Timer turnTimer = Timer();
+
+// sprint timer. This is for setting times for sprints in the straight sections
+Timer sprintTimer = Timer();
 
 // CleanEdge object for button. Initial button state unpressed.
 CleanEdge buttonReader = CleanEdge(buttonPort, buttonDebounceDelay, unpressed);
@@ -407,6 +406,11 @@ int RFMotorSpeed;
 int LRMotorSpeed;
 int RRMotorSpeed;
 
+//motor speeds for line following. Negative is reverse, and fastSideSpeed is the
+//straight drive speed of the robot.
+int slowSideSpeed = -130;  // fixed slow side speed for turning out of line error.
+int fastSideSpeed = 130;   // fixed high side speed for turning out of line error.
+
 // Initial motor speed (all four motors);
 int initialMotorSpeed;
 
@@ -415,7 +419,7 @@ const int seekingFirstLine = 0;
 const int seekingSecondLine = 1;
 const int seekingBlocked = 3;
 
-const int totalDoubleLineCrossings = 4; //Crossing starting line twice and two crosswalks
+const int totalDoubleLineCrossings = 4;  //Crossing starting line twice and two crosswalks
 
 int waitingForFinalStandby;  //set when we are crossing the finish line
 
@@ -425,10 +429,10 @@ int doubleLineCount;
 
 // Loop mode state variables
 int mode;
-const int modeTest = 1;       //test mode for testing stuff on the robot
-const int modeStandby = 2;    //standby mode for before and after the timed run
-const int modeRun = 3;        //run mode for the timed run
-const int modePause = 4;      //pause mode for crosswalk stops while in run mode
+const int modeTest = 1;     //test mode for testing stuff on the robot
+const int modeStandby = 2;  //standby mode for before and after the timed run
+const int modeRun = 3;      //run mode for the timed run
+const int modePause = 4;    //pause mode for crosswalk stops while in run mode
 
 // Line following support state
 
@@ -444,8 +448,8 @@ int count = 0;
 
 // IMU globals (accelerometer, gyro)
 
-float timeStep = 0.01;      //Sample time for gyro rate incremental integration in seconds
-long imuTimeStep = timeStep * 1000; //timeStep for sample timer in milliseconds
+float timeStep = 0.01;               //Sample time for gyro rate incremental integration in seconds
+long imuTimeStep = timeStep * 1000;  //timeStep for sample timer in milliseconds
 // Pitch, Roll and Yaw values
 float pitch = 0;
 float roll = 0;
@@ -481,16 +485,17 @@ float yaw = 0;
        point that ends the section.
     3) Copy the constants in the arrays to the regular global constants
 
-    To gauge when a turn starts and ends, we will break up the run into buckets of time and 
+    To gauge when a turn starts and ends, we will break up the run into buckets of time and
     collect the number and direction of corrections in each bucket. When a bucket has a bunch
     of right corrections and not many left corrections, we know that we are in a right correction
     period, and vice versa for left corrections. When there are not many corrections in a bucket,
     we know we are going pretty much straight. When there is a transition from one of these
     situations to a different one, we add one to the section count.
-    
+
     All of this is done by the function void UpdateCourseSection(), which is called from the
     run mode code in the main loop.
 */
+/*
 void UpdateCourseSection()
 {
     static int section = 0;
@@ -511,50 +516,51 @@ void UpdateCourseSection()
     }
     if (turnTimer.Test())
     {
-       // time bucket is complete. We check our correction counts and compare
-       // with the turn threshold. If one is bigger, we are in a turn. 
-       if (rightCorrectionCount > turnThreshold)
-       {
-         // we are in a right turn. Check if this is the same as are last
-         // bucket result. If so, do nothing because this is part of the turn
-         // up to now. Otherwise, increment the section.
-         if (inTurn != right)
-         {
-          section++;
-          inTurn = right; // update inTurn value
-         }
-       }
-       else if (leftCorrectionCount > turnThreshold)
-       {
-        // same deal as right turn above
-        if (inTurn != left)
+        // time bucket is complete. We check our correction counts and compare
+        // with the turn threshold. If one is bigger, we are in a turn.
+        if (rightCorrectionCount > turnThreshold)
         {
-          section++;
-          inTurn = left; 
+            // we are in a right turn. Check if this is the same as are last
+            // bucket result. If so, do nothing because this is part of the turn
+            // up to now. Otherwise, increment the section.
+            if (inTurn != right)
+            {
+                section++;
+                inTurn = right;  // update inTurn value
+            }
         }
-       }
-       else
-       {
-        // we are not in a turn. This is either because a turn has ended, or because
-        // we are continuing a straight section.
-        if (inTurn != none)
+        else if (leftCorrectionCount > turnThreshold)
         {
-          section++;
-          inTurn = none;
+            // same deal as right turn above
+            if (inTurn != left)
+            {
+                section++;
+                inTurn = left;
+            }
         }
-       }
-       //Serial.print(leftCorrectionCount);
-       //Serial.print (" ");
-       //Serial.print(rightCorrectionCount);
-       //Serial.print (" ");
-       //Serial.println (section);
-       //We are going to start another time bucket with the counters set to zero.
-       leftCorrectionCount = 0;
-       rightCorrectionCount = 0;
-       turnTimer.Start(turnTimeBucket);
+        else
+        {
+            // we are not in a turn. This is either because a turn has ended, or because
+            // we are continuing a straight section.
+            if (inTurn != none)
+            {
+                section++;
+                inTurn = none;
+            }
+        }
+        //Serial.print(leftCorrectionCount);
+        //Serial.print (" ");
+        //Serial.print(rightCorrectionCount);
+        //Serial.print (" ");
+        //Serial.println (section);
+        //We are going to start another time bucket with the counters set to zero.
+        leftCorrectionCount = 0;
+        rightCorrectionCount = 0;
+        turnTimer.Start(turnTimeBucket);
     }
     DisplayCount(section);
 }
+*/
 /*
     Display a number between 0 and 99 or 0xFF on the two digit seven segment display. This function is
     designed to be called every time around the loop when it is in use. between calls, the display
@@ -570,42 +576,42 @@ void DisplayCount(int num)
     //int radix = 16;
     //int radixSquared = 256;
     int digit;
-    static boolean showOnes = true; //display ones place if true, else display tens place
+    static boolean showOnes = true;  //display ones place if true, else display tens place
 
     /*
-        Set array to define which segments to turn on for each digit. A zero in the array
-        corresponds to a segment being lit. Entry 17 of the array turns off all segments.
-            0
-          1   2
-            3
-          4   5
-            6
+          Set array to define which segments to turn on for each digit. A zero in the array
+          corresponds to a segment being lit. Entry 17 of the array turns off all segments.
+              0
+            1   2
+              3
+            4   5
+              6
     */
 
     uint8_t segments[17][7] =
     {
-        {0, 0, 0, 1, 0, 0, 0},  //0
-        {1, 1, 0, 1, 1, 0, 1},  //1
-        {0, 1, 0, 0, 0, 1, 0},  //2
-        {0, 1, 0, 0, 1, 0, 0},  //3
-        {1, 0, 0, 0, 1, 0, 1},  //4
-        {0, 0, 1, 0, 1, 0, 0},  //5
-        {0, 0, 1, 0, 0, 0, 0},  //6
-        {0, 1, 0, 1, 1, 0, 1},  //7
-        {0, 0, 0, 0, 0, 0, 0},  //8
-        {0, 0, 0, 0, 1, 0, 0},  //9
-        {0, 0, 0, 0, 0, 0, 1},  //A
-        {1, 0, 1, 0, 0, 0, 0},  //b
-        {0, 0, 1, 1, 0, 1, 0},  //C
-        {1, 1, 0, 0, 0, 0, 0},  //d
-        {0, 0, 1, 0, 0, 1, 0},  //E
-        {0, 0, 1, 0, 0, 1, 1},  //F
-        {1, 1, 1, 1, 1, 1, 1}   //blank
+        { 0, 0, 0, 1, 0, 0, 0 },  //0
+        { 1, 1, 0, 1, 1, 0, 1 },  //1
+        { 0, 1, 0, 0, 0, 1, 0 },  //2
+        { 0, 1, 0, 0, 1, 0, 0 },  //3
+        { 1, 0, 0, 0, 1, 0, 1 },  //4
+        { 0, 0, 1, 0, 1, 0, 0 },  //5
+        { 0, 0, 1, 0, 0, 0, 0 },  //6
+        { 0, 1, 0, 1, 1, 0, 1 },  //7
+        { 0, 0, 0, 0, 0, 0, 0 },  //8
+        { 0, 0, 0, 0, 1, 0, 0 },  //9
+        { 0, 0, 0, 0, 0, 0, 1 },  //A
+        { 1, 0, 1, 0, 0, 0, 0 },  //b
+        { 0, 0, 1, 1, 0, 1, 0 },  //C
+        { 1, 1, 0, 0, 0, 0, 0 },  //d
+        { 0, 0, 1, 0, 0, 1, 0 },  //E
+        { 0, 0, 1, 0, 0, 1, 1 },  //F
+        { 1, 1, 1, 1, 1, 1, 1 }   //blank
     };
 
     // deal with illegal values. We just take the absolute value and truncate to two digits,
     // so the value will always be between zero and 99.
-    num  = abs(num % radixSquared);
+    num = abs(num % radixSquared);
 
     // If the number is only one digit, force showOnes to true because the tens
     // digit will always be blank.
@@ -622,21 +628,21 @@ void DisplayCount(int num)
         //
         if (showOnes)
         {
-            digit = num % radix; // base radix integer remainder (modulus)
+            digit = num % radix;  // base radix integer remainder (modulus)
             digitalWrite(ledPort7SegAnodeOnes, ledOn);
             digitalWrite(ledPort7SegAnodeTens, ledOff);
-            showOnes = false; //set up for tens place next time
+            showOnes = false;  //set up for tens place next time
         }
         else
         {
             digit = num / radix;
             if (digit == 0)
             {
-                digit = 17; // causes blank display (no leading zero)
+                digit = 17;  // causes blank display (no leading zero)
             }
             digitalWrite(ledPort7SegAnodeOnes, ledOff);
             digitalWrite(ledPort7SegAnodeTens, ledOn);
-            showOnes = true; //set up for ones place next time
+            showOnes = true;  //set up for ones place next time
         }
         // Use the segments array to set segment port values.
         digitalWrite(ledPort7SegTop, segments[digit][0]);
@@ -646,7 +652,7 @@ void DisplayCount(int num)
         digitalWrite(ledPort7SegLowerLeft, segments[digit][4]);
         digitalWrite(ledPort7SegLowerRight, segments[digit][5]);
         digitalWrite(ledPort7SegBottom, segments[digit][6]);
-        digitalWrite(ledPort7SegPoint, ledOff); // decimal point always off
+        digitalWrite(ledPort7SegPoint, ledOff);  // decimal point always off
 
         //start the refresh timer. No ports will be written until it times out.
         displayRefreshTimer.Start(displayRefreshPeriod);
@@ -686,7 +692,8 @@ void SetSpeedLeft(int speed)
         LFMotor->run(BACKWARD);
         LRMotor->run(BACKWARD);
         speed = abs(speed);
-    }    LFMotorSpeed = 80;
+    }
+    LFMotorSpeed = 80;
     LFMotorSpeed = speed;
     LRMotorSpeed = speed;
     LFMotor->setSpeed(LFMotorSpeed);
@@ -758,8 +765,7 @@ void ModeStartToStandby()
     digitalWrite(ledPortYellow, ledOn);
     // stop motors
     SetSpeedRight(0);
-    SetSpeedLeft (0);
-
+    SetSpeedLeft(0);
 }
 
 // Mode transition from run to standby, which happens when you push the
@@ -771,7 +777,7 @@ void ModeRunToStandby()
     digitalWrite(ledPortYellow, ledOn);
     // stop motors
     SetSpeedRight(0);
-    SetSpeedLeft (0);
+    SetSpeedLeft(0);
 }
 
 // Mode transition from pause to standby. Handles a button push during pause.
@@ -782,7 +788,7 @@ void ModePauseToStandby()
     digitalWrite(ledPortYellow, ledOn);
     // stop motors
     SetSpeedRight(0);
-    SetSpeedLeft (0);
+    SetSpeedLeft(0);
 }
 
 // Mode transition from standby to run. This transition happens after a delay after
@@ -822,13 +828,13 @@ void ModeRunToPause()
 
     // stop motors
     SetSpeedRight(0);
-    SetSpeedLeft (0);
+    SetSpeedLeft(0);
 
     // Pause mode is 3 seconds long. Start timer. The timer will be polled during pause
     // mode in the main loop until the 3 seconds is past, then the transition back to
     // run mode will happen.
 
-    pauseTimer.Start(pauseModeDuration); // set timer to 3 seconds
+    pauseTimer.Start(pauseModeDuration);  // set timer to 3 seconds
 }
 
 
@@ -867,11 +873,11 @@ void ModeRunToPause()
 void setup()
 {
     // Start serial port for debugging
-    Serial.begin(115200); // open the serial port at 115200 bps:
+    Serial.begin(115200);  // open the serial port at 115200 bps:
 
     // Start real time clock
-    realTimeClock.begin(); // connect real time clock to I2C bus
-    realTimeClock.start(); // clear the stop bit. Normally not necessary, but doesn't hurt.
+    realTimeClock.begin();  // connect real time clock to I2C bus
+    realTimeClock.start();  // clear the stop bit. Normally not necessary, but doesn't hurt.
 
     //
     //  set initial motor speed
@@ -907,8 +913,8 @@ void setup()
 
     // Start IMU (Inertial Measurement Unit) with scale and range settings, for I2C address 0x69
     imu.begin(MPU6050_SCALE_2000DPS, MPU6050_RANGE_2G, 0x69);
-    imu.calibrateGyro();    // Calibrate gyroscope. The calibration must be at rest.
-    imu.setThreshold(1);    // Set threshold sensitivty. Default = 3.
+    imu.calibrateGyro();  // Calibrate gyroscope. The calibration must be at rest.
+    imu.setThreshold(1);  // Set threshold sensitivty. Default = 3.
 
     // initialize inCorrection. This is used by the line following code
     inCorrection = none;
@@ -916,6 +922,9 @@ void setup()
     // turn off seven segment display by deactivating both anodes
     digitalWrite(ledPort7SegAnodeOnes, ledOff);
     digitalWrite(ledPort7SegAnodeTens, ledOff);
+
+    // initialize course section
+    courseSection = 0;
 
     //
     // Read the button. If the button is pressed, set the mode to modeTest.
@@ -938,12 +947,12 @@ void setup()
 */
 void loop()
 {
-    /*                                      _   _   _  __    _  _   _   _
-                          /\  |  |    |\/| / \ | \ |_ (_    /  / \ | \ |_
-                         /--\ |_ |_   |  | \_/ |_/ |_ __)   \_ \_/ |_/ |_
+    /*                                        _   _   _  __    _  _   _   _
+                            /\  |  |    |\/| / \ | \ |_ (_    /  / \ | \ |_
+                           /--\ |_ |_   |  | \_/ |_/ |_ __)   \_ \_/ |_/ |_
 
-        read IR line sensors, digital version. This just reads the digital value
-        from the sensor, which sets its threshold with a trim pot.
+          read IR line sensors, digital version. This just reads the digital value
+          from the sensor, which sets its threshold with a trim pot.
     */
 #ifndef ANALOGSENSING
     lineSensorValLeft = digitalRead(digLineSensorPortLeft);
@@ -953,28 +962,28 @@ void loop()
 
 #ifdef ANALOGSENSING
     /*
-        read IR line sensor, analog version. This reads the analog value of the
-        sensor and compares it with the analog thresholds. There is a threshold
-        for dark and a threshold for light, which gives us a chance to create
-        hysteresis for each sensor.
+          read IR line sensor, analog version. This reads the analog value of the
+          sensor and compares it with the analog thresholds. There is a threshold
+          for dark and a threshold for light, which gives us a chance to create
+          hysteresis for each sensor.
 
-        First, read the sensor analog values
+          First, read the sensor analog values
     */
     analogSensorValLeft = analogRead(analogLineSensorPortLeft);
     analogSensorValMiddle = analogRead(analogLineSensorPortMiddle);
     analogSensorValRight = analogRead(analogLineSensorPortRight);
 
     /*
-        Test each sensor value against the light threshold and the dark
-        threshold. Note that the analog value goes up as the reflected
-        light is darker. If the sensor output is higher than the dark
-        threshold, set the digital state for the sensor to dark. If it
-        is lower than the light threshold, set it to light. If there is
-        a gap between the thresholds, there is hysteresis. If the thresholds
-        are equal, there will be no hysteresis. If the dark threshold is
-        less than the light threshold, then the dark threshold is
-        is effectively the only threshold, because if the dark threshold
-        test fails, the light threshold will always succeed.
+          Test each sensor value against the light threshold and the dark
+          threshold. Note that the analog value goes up as the reflected
+          light is darker. If the sensor output is higher than the dark
+          threshold, set the digital state for the sensor to dark. If it
+          is lower than the light threshold, set it to light. If there is
+          a gap between the thresholds, there is hysteresis. If the thresholds
+          are equal, there will be no hysteresis. If the dark threshold is
+          less than the light threshold, then the dark threshold is
+          is effectively the only threshold, because if the dark threshold
+          test fails, the light threshold will always succeed.
     */
     // left sensor code
     if (analogSensorValLeft > thresholdLeftDark)
@@ -1037,48 +1046,101 @@ void loop()
         digitalWrite(ledPortWhite, ledOff);
     }
 
-    /*                    _                   _   _   _    _  _   _   _
-                         |_) | | |\ |   |\/| / \ | \ |_   /  / \ | \ |_
-                         | \ |_| | \|   |  | \_/ |_/ |_   \_ \_/ |_/ |_
+    /*                      _                   _   _   _    _  _   _   _
+                           |_) | | |\ |   |\/| / \ | \ |_   /  / \ | \ |_
+                           | \ |_| | \|   |  | \_/ |_/ |_   \_ \_/ |_/ |_
     */
     if (mode == modeRun)
     {
-        runLed.Update(); // Update Run flasher.
+        runLed.Update();  // Update Run flasher.
         //update7SegDisplay();
-        UpdateCourseSection();
+        //UpdateCourseSection();
+        DisplayCount(courseSection);
 
         /*******************************Detect Course Segment*********************************
 
-            We start in segment 11 at the beginning of the course. Each section transition has a criterion
-            for advancing to the next section. For the straight sections, this is a timer, which will
-            need to track the time it takes to the next turn. For the turns, it is detection of the 
-            opposite road edge, eg a right turn ends when the right edge of the roadway is detected.
-            Some transitions are detected when a cross line is detected, like the first crosswalk.
+                We start in segment 11 at the beginning of the course. Each section transition has a criterion
+                for advancing to the next section. For the straight sections, this is a timer, which will
+                need to track the time it takes to the next turn. For the turns, it is detection of the
+                opposite road edge, eg a right turn ends when the right edge of the roadway is detected.
+                Some transitions are detected when a cross line is detected, like the first crosswalk.
+
         */
+        switch (courseSection)
+        {
+            case 0:
+                /*
+                    Section zero is just the beginning of the course. It kicks off section 11 by starting the timer
+                    for the first sprint.
+                */
+                sprintTimer.Start(sec11SprintTime);
+                courseSection = 11;
+            case 11:
+                /*
+                    this section starts before the starting line and runs to the first turn. It ends after the
+                    sprint timer expires
+                */
+                if (sprintTimer.Test())
+                {
+                    courseSection = 12;
+                }
+                fastSideSpeed = sec11FastSideSpeed;
+                slowSideSpeed = sec11SlowSideSpeed;
+                break;
+
+            case 12:
+                /*
+                    This section is the first right turn. It ends when we detect the right road edge, indicating the
+                    beginning of the first left turn.
+                */
+                if (inCorrection == right)
+                {
+                    courseSection = 13;
+                }
+                fastSideSpeed = sec12FastSideSpeed;
+                slowSideSpeed = sec12SlowSideSpeed;
+                break;
+                
+            case 13:
+                /*
+                    This section is the first right turn. It ends when we detect the right road edge, indicating the
+                    beginning of the first left turn.
+                */
+                if (inCorrection == left)
+                {
+                    courseSection = 14;
+                }
+                fastSideSpeed = sec13FastSideSpeed;
+                slowSideSpeed = sec13SlowSideSpeed;
+                break;
+                
+            default:
+                break;
+        }
 
         /*************************************Line following algorithm************************
 
-            There are two line sensors, one on the front right
-            corner and one on the front left corner. When one of these sensors sees a line,
-            it sets the wheels on the opposite side to slow way down or reverse, which causes
-            the robot to turn away from the line. When the sensor stops seeing the line,
-            those wheels return to normal forward rotation. There are a few special cases...
+                There are two line sensors, one on the front right
+                corner and one on the front left corner. When one of these sensors sees a line,
+                it sets the wheels on the opposite side to slow way down or reverse, which causes
+                the robot to turn away from the line. When the sensor stops seeing the line,
+                those wheels return to normal forward rotation. There are a few special cases...
 
-            - At places where the road crosses itself, there is a line that goes across the
-            road. At that point, both line sensors will see a line. When that happens, we do
-            not correct direction, but continue to go straight. This depends on the robot not
-            being at a significant angle when it encounters a cross line. Since all of the cross lines
-            are in straight sections, this should always work unless we have overcorrected just before
-            a cross line.
+                - At places where the road crosses itself, there is a line that goes across the
+                road. At that point, both line sensors will see a line. When that happens, we do
+                not correct direction, but continue to go straight. This depends on the robot not
+                being at a significant angle when it encounters a cross line. Since all of the cross lines
+                are in straight sections, this should always work unless we have overcorrected just before
+                a cross line.
 
-            - For cross lines, we have some special cases.
-                1. If all three sensors (left right, middle) are dark, we assume we are crossing
-                the line. straight on. In this case, we do not correct.
-                2. If middle and right are dark, we assume we are hitting the cross line aiming left,
-                so we correct by turning right. We may want to adjust relative left and right speeds
-                if this overcorrects.
-                3. if middle and left are dark, we assume we are hitting the cross line aiming right,
-                so we correct by turning left. See caveat above.
+                - For cross lines, we have some special cases.
+                    1. If all three sensors (left right, middle) are dark, we assume we are crossing
+                    the line. straight on. In this case, we do not correct.
+                    2. If middle and right are dark, we assume we are hitting the cross line aiming left,
+                    so we correct by turning right. We may want to adjust relative left and right speeds
+                    if this overcorrects.
+                    3. if middle and left are dark, we assume we are hitting the cross line aiming right,
+                    so we correct by turning left. See caveat above.
         */
 
         if (lineSensorValLeft == dark && lineSensorValRight == dark)
@@ -1092,7 +1154,7 @@ void loop()
             // road edge detected. Turn toward the center of the road.
             inCorrection = left;
         }
-        else if (lineSensorValRight == dark && lineSensorValMiddle == light) /*|| lineSensorValRightOuter == dark*/
+        else if (lineSensorValRight == dark && lineSensorValMiddle == light)   /*|| lineSensorValRightOuter == dark*/
         {
             // road edge detected. Turn toward the center of the road
             inCorrection = right;
@@ -1113,58 +1175,58 @@ void loop()
         // end of line detection.  Result is setting inCorrection. The next code responds
         // to that value
 
-        if (inCorrection == left) // Correcting for left side line detection
+        if (inCorrection == left)  // Correcting for left side line detection
         {
             // line has been detected on the left side. We want to turn right to clear the line
             SetSpeedRight(slowSideSpeed);
             SetSpeedLeft(fastSideSpeed);
         }
-        else if (inCorrection == right) // Correcting for right side line detection
+        else if (inCorrection == right)    // Correcting for right side line detection
         {
             // line has been detected on the right side. We want ato turn left to clear the line
-            SetSpeedRight (fastSideSpeed);
-            SetSpeedLeft (slowSideSpeed);
+            SetSpeedRight(fastSideSpeed);
+            SetSpeedLeft(slowSideSpeed);
         }
-        else if (inCorrection == none)//no correction needed
+        else if (inCorrection == none)    //no correction needed
         {
             // just go straight
-            SetSpeedRight (fastSideSpeed);
-            SetSpeedLeft (fastSideSpeed);
+            SetSpeedRight(fastSideSpeed);
+            SetSpeedLeft(fastSideSpeed);
         }
 
         /*
-            ****************************Line counting and crosswalk detection***************************
+                ****************************Line counting and crosswalk detection***************************
 
-            This code counts the lines crossed by the robot. Where the roadway crosses itself, we see lines
-            crossing the road. At these points, we need to ignore the line following sensors, because the
-            crossing lines are obscuring the boundaries at that point. At two points on the course, there is
-            an extra line before the line that marks the edge of the roadway, spaced one inch away from the
-            crossing roadway boundary. These positions are designated as crosswalks and the robot needs to go
-            into pause mode for three seconds at these points. There is also a double line at the end of the course,
-            where we need to go into standby mode.
+                This code counts the lines crossed by the robot. Where the roadway crosses itself, we see lines
+                crossing the road. At these points, we need to ignore the line following sensors, because the
+                crossing lines are obscuring the boundaries at that point. At two points on the course, there is
+                an extra line before the line that marks the edge of the roadway, spaced one inch away from the
+                crossing roadway boundary. These positions are designated as crosswalks and the robot needs to go
+                into pause mode for three seconds at these points. There is also a double line at the end of the course,
+                where we need to go into standby mode.
 
-            Cross walk detection. We use our cleanEdge object, centerLineSensorReader, to detect a
-            light-dark-light cycle, then we look for another light-dark transition within a short time later.
-            At this point, we should be just past a double cross line. Sequence of operations...
+                Cross walk detection. We use our cleanEdge object, centerLineSensorReader, to detect a
+                light-dark-light cycle, then we look for another light-dark transition within a short time later.
+                At this point, we should be just past a double cross line. Sequence of operations...
         */
 
         /*
-            There are three possibilities at this point:
+                There are three possibilities at this point:
 
-            1...We are looking for a crossing line, either the first of a double line, or a crossing roadway.
-            pauseReturnDelay is false
-            firstLineDetected is false
-            crossLineState = seekingFirstLine
+                1...We are looking for a crossing line, either the first of a double line, or a crossing roadway.
+                pauseReturnDelay is false
+                firstLineDetected is false
+                crossLineState = seekingFirstLine
 
-            2...We have found a line and we are checking for a second line close to it.
-            firstLineDetected is true
-            pauseReturnDelay is false
-            crossLineState = seekingSecondLine
+                2...We have found a line and we are checking for a second line close to it.
+                firstLineDetected is true
+                pauseReturnDelay is false
+                crossLineState = seekingSecondLine
 
-            3...We have recently returned from a pause due to finding a double line and need to move off of it.
-            firstLineDetected is false
-            pauseReturnDelay is true
-            crossLineState = seekingBlocked
+                3...We have recently returned from a pause due to finding a double line and need to move off of it.
+                firstLineDetected is false
+                pauseReturnDelay is true
+                crossLineState = seekingBlocked
 
         */
         if (crossLineState == seekingFirstLine)
@@ -1183,7 +1245,7 @@ void loop()
 
                 // update state to start seeking second line and start the time window
                 crossLineState = seekingSecondLine;
-                secondLineTimer.Start(seekingSecondLineTimeWindow); //open time window for finding a second line
+                secondLineTimer.Start(seekingSecondLineTimeWindow);  //open time window for finding a second line
             }
             else
             {
@@ -1232,7 +1294,6 @@ void loop()
                         // double line is a crosswalk. Transition to pause mode. The next call
                         // to loop() will go to the pause mode code.
                         ModeRunToPause();
-
                     }
                 }
             }
@@ -1242,10 +1303,10 @@ void loop()
                 // second line, close enough to the first one, so there was only one line at
                 // this location and we can start looking for the next one.
 
-                crossLineState = seekingFirstLine; //start looking for the next line
+                crossLineState = seekingFirstLine;  //start looking for the next line
             }
         }
-        else if (firstLineBlockTimer.Test()) // crossLineState == seekingBlocked
+        else if (firstLineBlockTimer.Test())    // crossLineState == seekingBlocked
         {
             // here we are not seeking the first or second line, but the timer we started to avoid double
             // counting the second line has expired, so we can start looking for a first line again.
@@ -1259,16 +1320,16 @@ void loop()
         }
 
         /*
-            Code past this point has calls to mode transitions. We put this at the end because the
-            transition functions called will return to here before the next mode is started, and
-            we don't want to execute any more consequential run mode code after this return.
+                Code past this point has calls to mode transitions. We put this at the end because the
+                transition functions called will return to here before the next mode is started, and
+                we don't want to execute any more consequential run mode code after this return.
         */
 
         /***********************************Button Processing********************************/
         //
         // Look for a button press and release. If we see it, then switch to standby mode.
         //
-        if (buttonReader.CheckCycle())      // when the button is pressed and released, we go to standby mode
+        if (buttonReader.CheckCycle())  // when the button is pressed and released, we go to standby mode
         {
             //Serial.println("run to standby");
             ModeRunToStandby();
@@ -1282,10 +1343,10 @@ void loop()
         {
             ModeRunToStandby();
         }
-    } // end of run mode code
+    }  // end of run mode code
     /*                       ___ _  __ ___         _   _   _    _  _   _   _
-                              | |_ (_   |    |\/| / \ | \ |_   /  / \ | \ |_
-                              | |_ __)  |    |  | \_/ |_/ |_   \_ \_/ |_/ |_
+                                | |_ (_   |    |\/| / \ | \ |_   /  / \ | \ |_
+                                | |_ __)  |    |  | \_/ |_/ |_   \_ \_/ |_/ |_
     */
     else if (mode == modeTest)
     {
@@ -1293,103 +1354,103 @@ void loop()
         // code for test mode
         //
         /*
-            Code for finding analog thresholds of line sensors. The hardware thresholds on the sensors are
-            adjusted via trimpots on the boards. This code watches each sensor's digital output and when it sees
-            a change, it reads the corresponing analog input and reports the transition and value via the
-            serial monitor. All of the sensors will have already been read at this point. We just have to recognise
-            that there has been a change since the last read and report both values when there is.
+                Code for finding analog thresholds of line sensors. The hardware thresholds on the sensors are
+                adjusted via trimpots on the boards. This code watches each sensor's digital output and when it sees
+                a change, it reads the corresponing analog input and reports the transition and value via the
+                serial monitor. All of the sensors will have already been read at this point. We just have to recognise
+                that there has been a change since the last read and report both values when there is.
         */
         char stringBuffer[80];  // character array to assemble formatted strings using sprintf()
         /*
-                // For line sensor calibration
-                // Check each line sensor digital state and report changes to the serial terminal along with the
-                // analog values.
-                if (prevLineSensorValLeft != lineSensorValLeft)
-                {
-                    // report both the left and the right sensor data
-                    sprintf(stringBuffer, "L Sensor %d -> %d Analog %d", prevLineSensorValLeft, lineSensorValLeft, analogSensorValLeft);
-                    Serial.println(stringBuffer);
-                    sprintf(stringBuffer, "R Sensor        %d Analog %d", lineSensorValRight, analogSensorValRight);
-                    Serial.println(stringBuffer);
-                    prevLineSensorValLeft = lineSensorValLeft;
-                }
+                    // For line sensor calibration
+                    // Check each line sensor digital state and report changes to the serial terminal along with the
+                    // analog values.
+                    if (prevLineSensorValLeft != lineSensorValLeft)
+                    {
+                        // report both the left and the right sensor data
+                        sprintf(stringBuffer, "L Sensor %d -> %d Analog %d", prevLineSensorValLeft, lineSensorValLeft, analogSensorValLeft);
+                        Serial.println(stringBuffer);
+                        sprintf(stringBuffer, "R Sensor        %d Analog %d", lineSensorValRight, analogSensorValRight);
+                        Serial.println(stringBuffer);
+                        prevLineSensorValLeft = lineSensorValLeft;
+                    }
 
-                if (prevLineSensorValMiddle != lineSensorValMiddle)
-                {
-                    sprintf(stringBuffer, "M Sensor %d -> %d Analog %d", prevLineSensorValMiddle, lineSensorValMiddle, analogSensorValMiddle);
-                    Serial.println(stringBuffer);
-                    prevLineSensorValMiddle = lineSensorValMiddle;
-                }
+                    if (prevLineSensorValMiddle != lineSensorValMiddle)
+                    {
+                        sprintf(stringBuffer, "M Sensor %d -> %d Analog %d", prevLineSensorValMiddle, lineSensorValMiddle, analogSensorValMiddle);
+                        Serial.println(stringBuffer);
+                        prevLineSensorValMiddle = lineSensorValMiddle;
+                    }
 
-                if (prevLineSensorValRight != lineSensorValRight)
-                {
-                    // report both the left and the right sensor data
-                    sprintf(stringBuffer, "R Sensor %d -> %d Analog %d", prevLineSensorValRight, lineSensorValRight, analogSensorValRight);
-                    Serial.println(stringBuffer);
-                    prevLineSensorValRight = lineSensorValRight;
-                    sprintf(stringBuffer, "L Sensor        %d Analog %d", lineSensorValLeft, analogSensorValLeft);
-                    Serial.println(stringBuffer);
-                }
+                    if (prevLineSensorValRight != lineSensorValRight)
+                    {
+                        // report both the left and the right sensor data
+                        sprintf(stringBuffer, "R Sensor %d -> %d Analog %d", prevLineSensorValRight, lineSensorValRight, analogSensorValRight);
+                        Serial.println(stringBuffer);
+                        prevLineSensorValRight = lineSensorValRight;
+                        sprintf(stringBuffer, "L Sensor        %d Analog %d", lineSensorValLeft, analogSensorValLeft);
+                        Serial.println(stringBuffer);
+                    }
 
-                if (rtcTestTimer.Test())
-                {
-                    rtcTestTimer.Start(5000); // set timer to 5 seconds
-                    char daysOfTheWeek[7][12] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
-                    //Serial.println("Real Time Clock check...");
-                    DateTime now = realTimeClock.now();
-                    Serial.print(now.year(), DEC);
-                    Serial.print('/');
-                    Serial.print(now.month(), DEC);
-                    Serial.print('/');
-                    Serial.print(now.day(), DEC);
-                    Serial.print(" (");
-                    Serial.print(daysOfTheWeek[now.dayOfTheWeek()]);
-                    Serial.print(") ");
-                    Serial.print(now.hour(), DEC);
-                    Serial.print(':');
-                    Serial.print(now.minute(), DEC);
-                    Serial.print(':');
-                    Serial.print(now.second(), DEC);
-                    Serial.println();
-            }
-        */
-        /*
-            Gyro test code. We sample the gyro every timeStep seconds. The value we sample is
-            an angular rate. We multiply that by the timeStep to turn the rate into an angle
-            change, and add that to an accumulating value, which starts out at zero. Roughly
-            speaking, we are integrating the angular velocity over time to yield an angular
-            displacement. This will drift over time due to cumulative rounding error, but we
-            will try it out and see how well it works.
-        */
-        /*
-                if (imuGyroTimer.Test()) // check if timer has reached its limit
-                {
-                    // Read normalized values
-                    Vector norm = imu.readNormalizeGyro(); //vector to receive 3D gyro readings.
-
-                    // Calculate Pitch, Roll and Yaw (rough incremental rate integration)
-                    //pitch = pitch + norm.YAxis * timeStep;
-                    //roll = roll + norm.XAxis * timeStep;
-                    yaw = yaw + norm.ZAxis * timeStep;
-
-                    // Output raw
-                    //Serial.print(" Pitch = ");
-                    //Serial.print(pitch);
-                    //Serial.print(" Roll = ");
-                    //Serial.print(roll);
-                    Serial.print(" Yaw = ");
-                    Serial.println(yaw);
-
-                    // Wait to full timeStep period
-                    //delay((timeStep * 1000) - (millis() - timer));
-                    imuGyroTimer.Start(imuTimeStep); // start timer with time step delay
+                    if (rtcTestTimer.Test())
+                    {
+                        rtcTestTimer.Start(5000); // set timer to 5 seconds
+                        char daysOfTheWeek[7][12] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
+                        //Serial.println("Real Time Clock check...");
+                        DateTime now = realTimeClock.now();
+                        Serial.print(now.year(), DEC);
+                        Serial.print('/');
+                        Serial.print(now.month(), DEC);
+                        Serial.print('/');
+                        Serial.print(now.day(), DEC);
+                        Serial.print(" (");
+                        Serial.print(daysOfTheWeek[now.dayOfTheWeek()]);
+                        Serial.print(") ");
+                        Serial.print(now.hour(), DEC);
+                        Serial.print(':');
+                        Serial.print(now.minute(), DEC);
+                        Serial.print(':');
+                        Serial.print(now.second(), DEC);
+                        Serial.println();
                 }
         */
         /*
-            Test seven segment display. DisplayCount is called every cycle, but the
-            number to display is changed every second or so. Note DisplayCount has its
-            own timer for its refresh rate, so a lot of times when it is called, it does
-            nothing but maintain the current display state.
+                Gyro test code. We sample the gyro every timeStep seconds. The value we sample is
+                an angular rate. We multiply that by the timeStep to turn the rate into an angle
+                change, and add that to an accumulating value, which starts out at zero. Roughly
+                speaking, we are integrating the angular velocity over time to yield an angular
+                displacement. This will drift over time due to cumulative rounding error, but we
+                will try it out and see how well it works.
+        */
+        /*
+                    if (imuGyroTimer.Test()) // check if timer has reached its limit
+                    {
+                        // Read normalized values
+                        Vector norm = imu.readNormalizeGyro(); //vector to receive 3D gyro readings.
+
+                        // Calculate Pitch, Roll and Yaw (rough incremental rate integration)
+                        //pitch = pitch + norm.YAxis * timeStep;
+                        //roll = roll + norm.XAxis * timeStep;
+                        yaw = yaw + norm.ZAxis * timeStep;
+
+                        // Output raw
+                        //Serial.print(" Pitch = ");
+                        //Serial.print(pitch);
+                        //Serial.print(" Roll = ");
+                        //Serial.print(roll);
+                        Serial.print(" Yaw = ");
+                        Serial.println(yaw);
+
+                        // Wait to full timeStep period
+                        //delay((timeStep * 1000) - (millis() - timer));
+                        imuGyroTimer.Start(imuTimeStep); // start timer with time step delay
+                    }
+        */
+        /*
+                Test seven segment display. DisplayCount is called every cycle, but the
+                number to display is changed every second or so. Note DisplayCount has its
+                own timer for its refresh rate, so a lot of times when it is called, it does
+                nothing but maintain the current display state.
         */
 
         static int count = 0;
@@ -1400,10 +1461,10 @@ void loop()
             count++;
         }
 
-    } // end of test
+    }  // end of test
     /*                       __ ___           _    _              _   _   _    _  _   _   _
-                            (_   |  /\  |\ | | \  |_) \_/   |\/| / \ | \ |_   /  / \ | \ |_
-                            __)  | /--\ | \| |_/  |_)  |    |  | \_/ |_/ |_   \_ \_/ |_/ |_
+                              (_   |  /\  |\ | | \  |_) \_/   |\/| / \ | \ |_   /  / \ | \ |_
+                              __)  | /--\ | \| |_/  |_)  |    |  | \_/ |_/ |_   \_ \_/ |_/ |_
     */
     else if (mode == modeStandby)
     {
@@ -1426,22 +1487,22 @@ void loop()
                 ModeStandbyToRun();
             }
         }
-        else if (buttonReader.CheckCycle())      // when the button is pressed and released, we go to run mode after a delay.
+        else if (buttonReader.CheckCycle())    // when the button is pressed and released, we go to run mode after a delay.
         {
             // Note: CheckButtonCycle returns true only once per button cycle.
-            countdownToRun = true;                    //flag that we are in the countdown to run
-            standbyToRunTimer.Start(2000);       //Start pause to run timer for 2 second countdown
+            countdownToRun = true;          //flag that we are in the countdown to run
+            standbyToRunTimer.Start(2000);  //Start pause to run timer for 2 second countdown
             //Serial.println("standby to run start delay");
         }
         else
         {
             // do nothing while we wait for button cycle
         }
-    } // end of standby
+    }  // end of standby
 
     /*                         _           __  _         _   _   _    _  _   _   _
-                              |_) /\  | | (_  |_   |\/| / \ | \ |_   /  / \ | \ |_
-                              |  /--\ |_| __) |_   |  | \_/ |_/ |_   \_ \_/ |_/ |_
+                                |_) /\  | | (_  |_   |\/| / \ | \ |_   /  / \ | \ |_
+                                |  /--\ |_| __) |_   |  | \_/ |_/ |_   \_ \_/ |_/ |_
     */
 
     else if (mode == modePause)
@@ -1449,7 +1510,7 @@ void loop()
         //
         // Pause mode code
         //
-        pauseLed.Update();                       // update pause LED flasher object
+        pauseLed.Update();  // update pause LED flasher object
         //update7SegDisplay();
 
         //boolean pauseDone = pauseTimer.Test();   //poll the pause timer
@@ -1462,10 +1523,10 @@ void loop()
         // For the rare case that the button is pressed during pause mode:
         // Look for a button press and release. If we see it, then switch to standby mode.
         //
-        if (buttonReader.CheckCycle())      // when the button is pressed and released, we go to standby mode
+        if (buttonReader.CheckCycle())  // when the button is pressed and released, we go to standby mode
         {
             //Serial.println("pause to standby");
             ModePauseToStandby();
         }
-    } // end of  pause
-} // end of loop()
+    }  // end of  pause
+}  // end of loop()
