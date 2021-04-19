@@ -436,12 +436,17 @@ const int modePause = 4;    //pause mode for crosswalk stops while in run mode
 
 // Line following support state
 
-// correction directons. Signed integer so we can have multiple values if needed.
+// correction directons and turn status constants. Signed integer so we can have multiple values if needed.
 const int none = 0;
 const int right = 1;
 const int left = -1;
+const int unknown = 2;
+const int before = 3;
+const int during = 4;
 int inCorrection = none;
 int previousCorrection;
+int turnState;
+int turnDirection;
 
 // test stuff
 int count = 0;
@@ -460,51 +465,35 @@ float yaw = 0;
     \__/ | ||__| |  |   |  \__/| \|\__ | |\__/| \|__)
 */
 /*
-    Detect turns to divide the course into sections. The object is to detect the beginning and
-    end of each turn in the track and adjust speed, correction agressiveness, and possibly sensor
-    thresholds for each section. The theory is that tighter curves need more correction and gentler
-    curves need less, and that longer straight sections could allow for more speed. The minimum goal
-    is to anticipate difficult turns and slow down for them.
+    TurnStatus() returns whether the robot is not turning, and what direction. We use it to
+    determine whether we are leaving a turn so we can move on the the next course section or
+    start a sprint in a straight section. This function is called repeatedly during a turn and
+    returns left, right, none, or unknown. Unknown is returned when the timer is active ant
+    the function is still actively accumulating correction events.
 
-    Curve detection mechanism: The simplest approach is to detect corrections and place the
-    boundaries at inflection points - places where correction changes between left and right, or
-    where correction becomes significantly less frequent going into straight sections. A good
-    measure might be the number of corrections per second all in the same direction, and maybe
-    the amount of time each correction lasts.
-
-    Alternative approach: use the gyro to measure the turns, keeping a running average to compensate
-    for the jerky nature of the corrections. Not sure whether there is an advantage here vs just
-    tracking corrections as above, but one might become apparent.
-
-    Implementation (method 1): Add a function that gets called from the main loop to...
-    1) expand the run constants, speed, inside correction speed, etc, into arrays with one
-       element per section. Each section will have a starting speed and an ending speed to
-       accomodate sprinting or slowing down on straight sections.
-    2) set a timer for each section to estimate the length of time to spend at the starting
-       speed. For some sections, this time might be used as a gate to detect the inflection
-       point that ends the section.
-    3) Copy the constants in the arrays to the regular global constants
-
-    To gauge when a turn starts and ends, we will break up the run into buckets of time and
+    Implementation: we set a period of time ("time bucket") to look at correction events. We
     collect the number and direction of corrections in each bucket. When a bucket has a bunch
     of right corrections and not many left corrections, we know that we are in a right correction
     period, and vice versa for left corrections. When there are not many corrections in a bucket,
-    we know we are going pretty much straight. When there is a transition from one of these
-    situations to a different one, we add one to the section count.
+    we know we are either in a sustained straight section, or a turn ended at the beginning of
+    the time bucket.
 
-    All of this is done by the function void UpdateCourseSection(), which is called from the
-    run mode code in the main loop.
+    The argument, start, signals that this is the first call of this function so we can clear the
+    counters and start the timer.
 */
-/*
-void UpdateCourseSection()
-{
-    static int section = 0;
-    static int previousCorrection;
-    static int currentCorrection;
-    static int leftCorrectionCount = 0;
-    static int rightCorrectionCount = 0;
-    static int inTurn = none;
 
+int TurnStatus(boolean start)
+{
+
+    static int leftCorrectionCount; // how many left correction events have been accumulated since starting the time bucket
+    static int rightCorrectionCount; // how many right correction events...
+
+    if (start)
+    {
+        turnTimer.Start(turnTimeBucket);
+        leftCorrectionCount = 0;
+        rightCorrectionCount = 0;
+    }
     // Accumulate correction data from the line follower sensors
     if (inCorrection == right)
     {
@@ -514,53 +503,40 @@ void UpdateCourseSection()
     {
         leftCorrectionCount++;
     }
+
+    // check to see if the timer is done. If so, check the correction thresholds. We assume that the vase
+    // majority of the corrections will be in only one direction, and that only one direction will pass
+    // the threshold. If neither direction passes the threshold, then we conclude that the turn is finished.
     if (turnTimer.Test())
     {
         // time bucket is complete. We check our correction counts and compare
         // with the turn threshold. If one is bigger, we are in a turn.
         if (rightCorrectionCount > turnThreshold)
         {
-            // we are in a right turn. Check if this is the same as are last
-            // bucket result. If so, do nothing because this is part of the turn
-            // up to now. Otherwise, increment the section.
-            if (inTurn != right)
-            {
-                section++;
-                inTurn = right;  // update inTurn value
-            }
+            // we are in a right turn.
+            return (right);
+
         }
         else if (leftCorrectionCount > turnThreshold)
         {
-            // same deal as right turn above
-            if (inTurn != left)
-            {
-                section++;
-                inTurn = left;
-            }
+            // we are in a left turn.
+            return (left);
         }
+
         else
         {
             // we are not in a turn. This is either because a turn has ended, or because
             // we are continuing a straight section.
-            if (inTurn != none)
-            {
-                section++;
-                inTurn = none;
-            }
+            return (none);
         }
-        //Serial.print(leftCorrectionCount);
-        //Serial.print (" ");
-        //Serial.print(rightCorrectionCount);
-        //Serial.print (" ");
-        //Serial.println (section);
-        //We are going to start another time bucket with the counters set to zero.
-        leftCorrectionCount = 0;
-        rightCorrectionCount = 0;
-        turnTimer.Start(turnTimeBucket);
     }
-    DisplayCount(section);
+    else
+    {
+        // The timer is still active, so we return unknown
+        return (unknown);
+    }
 }
-*/
+
 /*
     Display a number between 0 and 99 or 0xFF on the two digit seven segment display. This function is
     designed to be called every time around the loop when it is in use. between calls, the display
@@ -1053,8 +1029,6 @@ void loop()
     if (mode == modeRun)
     {
         runLed.Update();  // Update Run flasher.
-        //update7SegDisplay();
-        //UpdateCourseSection();
         DisplayCount(courseSection);
 
         /*******************************Detect Course Segment*********************************
@@ -1077,12 +1051,13 @@ void loop()
                 courseSection = 11;
             case 11:
                 /*
-                    this section starts before the starting line and runs to the first turn. It ends after the
+                    this section starts before the starting line and runs to the first turn (right). It ends after the
                     sprint timer expires
                 */
                 if (sprintTimer.Test())
                 {
                     courseSection = 12;
+                    turnState = before; // we are about to track a turn. Set the state of the turn to before.
                 }
                 fastSideSpeed = sec11FastSideSpeed;
                 slowSideSpeed = sec11SlowSideSpeed;
@@ -1090,21 +1065,55 @@ void loop()
 
             case 12:
                 /*
-                    This section is the first right turn. It ends when we detect the right road edge, indicating the
-                    beginning of the first left turn.
+                    This section is the first right turn. It ends when corrections stop and we can do a short sprint to
+                    the next right turn.
+
+                    To monitor the turn, we sequence through three states -- pre-turn, during turn, and no turn detected.
+                    These states are kept in the global variable turnState, with values before, during and done. They sequence
+                    like this:
+
+                    turnState = before;
+                       wait until the first correction event is detected, then set
+                    turnState = during;
+                       monitor how many correction events happen in a fixed time. This is done by the TurnStatus() function.
+                       When it drops below a given threshold, then set
+                    turnState = done;
+                       go on to the next course section the next time around the loop
                 */
-                if (inCorrection == right)
+
+                // This code should be encapsulated in a function to serve all of the turns that need to be tracked..................
+
+                if (turnState == before)
+                {
+                    // we are waiting for the start of a left turn, so we test for inCorrection == left
+                    if (inCorrection == left)
+                    {
+                        // starting left turn
+                        turnState = during;
+                        turnDirection = TurnStatus(true); //initialize turn status. This starts the turn status timer.
+                    }
+                }
+                else if (turnState == during)
+                {
+                    // check if our average turn status is none. In this case, our turn is done.
+                    if (TurnStatus(false) == none)
+                    {
+                        turnState = none; //this will get picked up the next time around the loop.
+                    }
+                }
+                else if (turnState == none)
                 {
                     courseSection = 13;
+
+                    fastSideSpeed = sec13FastSideSpeed;
+                    slowSideSpeed = sec13SlowSideSpeed;
                 }
-                fastSideSpeed = sec12FastSideSpeed;
-                slowSideSpeed = sec12SlowSideSpeed;
                 break;
-                
+
             case 13:
                 /*
-                    This section is the first right turn. It ends when we detect the right road edge, indicating the
-                    beginning of the first left turn.
+                    This section is the straight secion after the first right turn. It ends when we detect the left road edge, indicating the
+                    beginning of the next right turn.
                 */
                 if (inCorrection == left)
                 {
@@ -1113,7 +1122,12 @@ void loop()
                 fastSideSpeed = sec13FastSideSpeed;
                 slowSideSpeed = sec13SlowSideSpeed;
                 break;
-                
+
+            case 14:
+            /*
+                This section is the right turn
+            */
+
             default:
                 break;
         }
