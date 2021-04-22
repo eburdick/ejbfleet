@@ -149,7 +149,7 @@ const int lightsOffThreshold = 9;
 
 // The seven segment number display can display only one digit at a time,
 // so we switch back and forth between them every displayRefreshPeriod milliseconds
-const int displayRefreshPeriod = 13;  //how often display switches between ones and tens place
+const int displayRefreshPeriod = 13;
 
 // The turn time bucket is the period of time we sample turn data before making a
 // decision on whether to advance the section counter. This should be happening several
@@ -160,48 +160,54 @@ const int turnTimeBucket = 500;
 // being in a turn. This number will go up with the size of the time bucket.
 const int turnThreshold = 30;
 
+int courseSection; //state variable stores which section we are in. Initialized in setup()
 //
-// Course specific constants and state. This code divides the course into seven sections, and some
-// sections are divided into subsections. The sections are numbered with two digits. The
+// Course specific constants and state. Define constants for the course sections, and their
+// subsections. The sections are numbered with two digits. The
 // tens place is the main section number, and the ones place is the sub-section number.
-// as we sequence through the course, we update the section number and execute code
-// corresponding to the current section.
+// These constants specify motor speeds and sprint times for straight sections.
 //
-int courseSection;
-// courseSection 1 constants (starting line to turn onto ramp)
-const int sec11FastSideSpeed = 200;   // speed for starting line to first turn
-const int sec11SlowSideSpeed = 50;    // gentle correction
-const int sec11SprintTime = 1000;     // duration of sprint time before starting turn
-const int sec12FastSideSpeed = 60;   // fast side speed for first turn right 60 degrees
-const int sec12SlowSideSpeed = -160;  // slow side speed for first turn
-const int sec13FastSideSpeed = 160;   // fast side speed for second turn right 80 degrees
-const int sec13SlowSideSpeed = -160;  // slow side speed for gentle turns
-const int sec14FastSideSpeed = 160;   // fast side speed for third turn right 80 degrees
-const int sec14SlowSideSpeed = -160;  // slow side speed for third turn
 
+// courseSection 1 constants (starting line to turn onto ramp)
+const int sec11FastSideSpeed = 255;   // speed for starting line to first turn
+const int sec11SlowSideSpeed = 50;    // gentle correction
+const int sec11SprintTime = 2000;     // duration of sprint time before starting turn
+// first turn (right)
+const int sec12FastSideSpeed = 100;   // fast side speed for first turn right 60 degrees
+const int sec12SlowSideSpeed = -200;  // slow side speed for first turn
+// straight section
+const int sec13FastSideSpeed  = 200;  // speed for short sprint between right turns
+const int sec13SlowSideSpeed = 50;    // gentle correction
+const int sec13SprintTime = 200;      // duration of sprint before second turn
+// second turn (right)
+const int sec14FastSideSpeed = 130;   // fast side speed for second turn right 80 degrees
+const int sec14SlowSideSpeed = -130;  // slow side speed for gentle turns
+// third turn (left)
+const int sec15FastSideSpeed = 130;   // fast side speed for third turn left 80 degrees
+const int sec15SlowSideSpeed = -130;  // slow side speed for third turn
 
 // courseSection 2 constants (turn onto ramp to turn at the top of the ramp)
-const int sec21FastSideSpeed = 160;   // fast side speed for turn onto ramp right 140 degrees
-const int sec21SlowSideSpeed = -160;  // slow side speed for turn onto ramp
+const int sec21FastSideSpeed = 130;   // fast side speed for turn onto ramp right 140 degrees
+const int sec21SlowSideSpeed = -130;  // slow side speed for turn onto ramp
 const int sec22FastSideSpeed = 200;   // speed up the ramp
 const int sec22SlowSideSpeed = 50;    // gentle correction
 const int sec22SprintTime = 500;      // duration of sprint time before ramp turn
 
 // courseSection 3 contants (turn onto down ramp to turn onto tunnel approach)
-const int sec31FastSideSpeed = 160;  // turn at top of ramp right 90 degrees
-const int sec31SlowSideSpeed = -160;
+const int sec31FastSideSpeed = 130;  // turn at top of ramp right 90 degrees
+const int sec31SlowSideSpeed = -130;
 const int sec32FastSideSpeed = 100;  // speed down the ramp
 const int sec32SlowSideSpeed = 0;    // gentle correction
 const int sec32SprintTime = 800;     // duration of sprint time before turn at bottom
 
 // courseSection 4 constants (turn onto tunnel approach, through tunnel to first crosswalk
-const int sec41FastSideSpeed = 160;  // first turn at bottom of ramp right 90 degrees
-const int sec41SlowSideSpeed = -160;
+const int sec41FastSideSpeed = 130;  // first turn at bottom of ramp right 90 degrees
+const int sec41SlowSideSpeed = -130;
 const int sec42FastSideSpeed = 200;  // short sprint after turn
 const int sec42SlowSideSpeed = 50;   // gentle correction
 const int sec42SprintTime = 500;
-const int sec43FastSideSpeed = 160;  // tunnel approach curve right 180 degrees
-const int sec43SlowSideSpeed = -160;
+const int sec43FastSideSpeed = 130;  // tunnel approach curve right 180 degrees
+const int sec43SlowSideSpeed = -130;
 const int sec44FastSideSpeed = 200;  // short sprint to first crosswalk
 const int sec44SlowSideSpeed = 50;   // gentle correction
 const int sec44SprintTime = 300;
@@ -210,29 +216,29 @@ const int sec44SprintTime = 300;
 const int sec51FastSideSpeed = 200;  // short sprint to turn
 const int sec51SlowSideSpeed = 50;   // gentle correction
 const int sec51SprintTime = 200;
-const int sec52FastSideSpeed = 160;  // first turn right 90 degrees
-const int sec52SlowSideSpeed = -160;
-const int sec53FastSideSpeed = 160;  // dogleg right 45 degrees
-const int sec53SlowSideSpeed = -160;
+const int sec52FastSideSpeed = 130;  // first turn right 90 degrees
+const int sec52SlowSideSpeed = -130;
+const int sec53FastSideSpeed = 130;  // dogleg right 45 degrees
+const int sec53SlowSideSpeed = -130;
 
 // courseSection 6 constants (bottom of figure 8 to second dogleg, passing three cross lines)
 const int sec61FastSideSpeed = 200;  // sprint to first turn
 const int sec61SlowSideSpeed = 50;   // gentle correction
 const int sec61SprintTime = 500;
-const int sec62FastSideSpeed = 160;  // first turn at bottom of fig 8 left 120 degrees
-const int sec62SlowSideSpeed = -160;
+const int sec62FastSideSpeed = 130;  // first turn at bottom of fig 8 left 120 degrees
+const int sec62SlowSideSpeed = -130;
 const int sec63FastSideSpeed = 200;  // sprint to second turn
 const int sec63SlowSideSpeed = 50;   // gentle correction
 const int sec63SprintTime = 300;
-const int sec64FastSideSpeed = 160;  // second turn at bottom of fig 8 left 160 degrees
-const int sec64SlowSideSpeed = -160;
+const int sec64FastSideSpeed = 130;  // second turn at bottom of fig 8 left 160 degrees
+const int sec64SlowSideSpeed = -130;
 const int sec65FastSideSpeed = 200;  // sprint to dogleg
 const int sec65SlowSideSpeed = 50;   // gentle correction
 const int sec65SprintTime = 500;
 
 // courseSection 7 constants (detecting dogleg and turning right, passing two cross lines, then 90 degree right,
 // straight sprint up to turn onto banked section
-const int sec71FastSideSpeed = 160;   // turning at dogleg
+const int sec71FastSideSpeed = 130;   // turning at dogleg
 const int sec71SlowSideSpeed = -200;  // agressive turn
 const int sec72FastSideSpeed = 200;   // sprint to 90 degree right
 const int sec72SlowSideSpeed = 50;    // gentle correction
@@ -242,13 +248,13 @@ const int sec73SlowSideSpeed = 50;   // gentle correction
 const int sec73SprintTime = 500;
 
 //CourseSection 8 constants (turn onto banked section to finish line)
-const int sec81FastSideSpeed = 160;  // turning onto banked section
-const int sec81SlowSideSpeed = -160;
+const int sec81FastSideSpeed = 130;  // turning onto banked section
+const int sec81SlowSideSpeed = -130;
 const int sec82FastSideSpeed = 200;  // sprint on banked section
 const int sec82SlowSideSpeed = 50;   // gentle correction
 const int sec82SprintTime = 2000;    // long section
-const int sec83FastSideSpeed = 160;  // final turn
-const int sec83SlowSideSpeed = -160;
+const int sec83FastSideSpeed = 130;  // final turn
+const int sec83SlowSideSpeed = -130;
 const int sec84FastSideSpeed = 200;  // sprint to finish line
 const int sec84SlowSideSpeed = 50;   // gentle correction
 const int sec84SprintTime = 2000;    // this sprint ends at the finish line, so sprint time probably not needed.
@@ -407,12 +413,10 @@ int LRMotorSpeed;
 int RRMotorSpeed;
 
 //motor speeds for line following. Negative is reverse, and fastSideSpeed is the
-//straight drive speed of the robot.
+//straight drive speed of the robot. These are assigned from the motor speeds
+//in the course section sequencing code.
 int slowSideSpeed = -130;  // fixed slow side speed for turning out of line error.
 int fastSideSpeed = 130;   // fixed high side speed for turning out of line error.
-
-// Initial motor speed (all four motors);
-int initialMotorSpeed;
 
 // state constants for cross line processing
 const int seekingFirstLine = 0;
@@ -441,12 +445,22 @@ const int none = 0;
 const int right = 1;
 const int left = -1;
 const int unknown = 2;
-const int before = 3;
-const int during = 4;
+//////////////////////////////////////////////////const int before = 3;
+//////////////////////////////////////////////////const int during = 4;
+const int idle = 5;
+const int waitingForLeftEdge = 6;
+const int waitingForRightEdge = 7;
+const int tracking = 8;
+
 int inCorrection = none;
 int previousCorrection;
 int turnState;
 int turnDirection;
+int turnTrackState;
+int inTurn;
+
+int leftCorrectionCount;
+int rightCorrectionCount;
 
 // test stuff
 int count = 0;
@@ -464,78 +478,7 @@ float yaw = 0;
     /  \ | ||  | | \_/  |_ /  \|\ |/   | |/  \|\ |(_
     \__/ | ||__| |  |   |  \__/| \|\__ | |\__/| \|__)
 */
-/*
-    TurnStatus() returns whether the robot is not turning, and what direction. We use it to
-    determine whether we are leaving a turn so we can move on the the next course section or
-    start a sprint in a straight section. This function is called repeatedly during a turn and
-    returns left, right, none, or unknown. Unknown is returned when the timer is active ant
-    the function is still actively accumulating correction events.
 
-    Implementation: we set a period of time ("time bucket") to look at correction events. We
-    collect the number and direction of corrections in each bucket. When a bucket has a bunch
-    of right corrections and not many left corrections, we know that we are in a right correction
-    period, and vice versa for left corrections. When there are not many corrections in a bucket,
-    we know we are either in a sustained straight section, or a turn ended at the beginning of
-    the time bucket.
-
-    The argument, start, signals that this is the first call of this function so we can clear the
-    counters and start the timer.
-*/
-
-int TurnStatus(boolean start)
-{
-
-    static int leftCorrectionCount; // how many left correction events have been accumulated since starting the time bucket
-    static int rightCorrectionCount; // how many right correction events...
-
-    if (start)
-    {
-        turnTimer.Start(turnTimeBucket);
-        leftCorrectionCount = 0;
-        rightCorrectionCount = 0;
-    }
-    // Accumulate correction data from the line follower sensors
-    if (inCorrection == right)
-    {
-        rightCorrectionCount++;
-    }
-    else if (inCorrection == left)
-    {
-        leftCorrectionCount++;
-    }
-
-    // check to see if the timer is done. If so, check the correction thresholds. We assume that the vase
-    // majority of the corrections will be in only one direction, and that only one direction will pass
-    // the threshold. If neither direction passes the threshold, then we conclude that the turn is finished.
-    if (turnTimer.Test())
-    {
-        // time bucket is complete. We check our correction counts and compare
-        // with the turn threshold. If one is bigger, we are in a turn.
-        if (rightCorrectionCount > turnThreshold)
-        {
-            // we are in a right turn.
-            return (right);
-
-        }
-        else if (leftCorrectionCount > turnThreshold)
-        {
-            // we are in a left turn.
-            return (left);
-        }
-
-        else
-        {
-            // we are not in a turn. This is either because a turn has ended, or because
-            // we are continuing a straight section.
-            return (none);
-        }
-    }
-    else
-    {
-        // The timer is still active, so we return unknown
-        return (unknown);
-    }
-}
 
 /*
     Display a number between 0 and 99 or 0xFF on the two digit seven segment display. This function is
@@ -634,14 +577,15 @@ void DisplayCount(int num)
         displayRefreshTimer.Start(displayRefreshPeriod);
     }
 }
+// end of void DisplayCount(int num)
 
 // function to update the seven segment display. This just calls the display function
 // above with a given variable. It is called at the beginning of the code for each non-test
 // mode, so we put it here so we can change what it displays in one place.
 void update7SegDisplay()
 {
-    // update the cross line count display
-    DisplayCount(crossLineCount);
+    // update the courseSection display
+    DisplayCount(courseSection);
 }
 /*********************************************************************************************/
 //
@@ -855,11 +799,6 @@ void setup()
     realTimeClock.begin();  // connect real time clock to I2C bus
     realTimeClock.start();  // clear the stop bit. Normally not necessary, but doesn't hurt.
 
-    //
-    //  set initial motor speed
-    //
-    initialMotorSpeed = 80;
-
     //set up the LED ports
     pinMode(ledPortWhite, OUTPUT);
     pinMode(ledPortYellow, OUTPUT);
@@ -899,8 +838,9 @@ void setup()
     digitalWrite(ledPort7SegAnodeOnes, ledOff);
     digitalWrite(ledPort7SegAnodeTens, ledOff);
 
-    // initialize course section
+    // initialize course section and turn tracking state
     courseSection = 0;
+    turnTrackState = idle;
 
     //
     // Read the button. If the button is pressed, set the mode to modeTest.
@@ -1031,6 +971,100 @@ void loop()
         runLed.Update();  // Update Run flasher.
         DisplayCount(courseSection);
 
+        /*******************************Turn Tracking*****************************************
+            This code is used to track the status of a turn. It is driven by the state variable
+
+            turnTrackState, which will have one of the following values...
+
+             idle...we are not actively tracking a turn
+
+             waitingForLeftEdge...we are expecting to start a right turn, and will track when we
+                                see the left edge.
+
+             waitingForRightEdge...we are expecting to start a left turn, and will track wne we
+                                 see the right edge.
+
+             tracking...the timer is running, and we are accumulating sensor events
+
+            The sequence works like this...turnTrackState is initialized to idle, which means this
+            mechanism is not being used.
+
+            If a track section contains a turn, and we need to know when
+            the turn ends, the section detection code will set waitingForLeftEdge or waitingForRightEdge,
+            and this code checks for inCorrecton = left or right on each iteration. When it is found,
+            we know the turn is starting, and we set turnTrackState to tracking and start the turnTimer.
+
+            While in this state, we count inCorrection values (left and right) and check the turn timer.
+            When the turn timer expires, we compare the inCorrection values to the threshold to determine
+            if we are still in a turn, and set inTurn = left, right or none. Then we clear the
+            inCorrection counts and restart the turnTimer.
+
+            When the track section code is done with this mechanism, it sets turnTrackState to idle.
+        */
+        if (turnTrackState == idle)
+        {
+            inTurn = unknown;
+        }
+        else if (turnTrackState == waitingForLeftEdge)
+        {
+            if (inCorrection == left)
+            {
+                turnTrackState = tracking;
+                turnTimer.Start(turnTimeBucket);
+            }
+        }
+        else if (turnTrackState == waitingForRightEdge)
+        {
+            if (inCorrection == right)
+            {
+                turnTrackState = tracking;
+                turnTimer.Start(turnTimeBucket);
+            }
+        }
+        // no else here because we want to respond immediatly to the state change to tracking.
+        if (turnTrackState == tracking)
+        {
+            // Accumulate correction data from the line follower sensors
+            if (inCorrection == right)
+            {
+                rightCorrectionCount++;
+            }
+            else if (inCorrection == left)
+            {
+                leftCorrectionCount++;
+            }
+
+            if (turnTimer.Test())
+            {
+                // accumulation time is expired. Test the counts and set inTurn to right, left or none
+                if (rightCorrectionCount > turnThreshold)
+                {
+                    // we are in a right turn.
+                    inTurn = right;
+
+                }
+                else if (leftCorrectionCount > turnThreshold)
+                {
+                    // we are in a left turn.
+                    inTurn = left;
+                }
+                else
+                {
+                    // we are not in a turn. This is either because a turn has ended, or because
+                    // we are continuing a straight section.
+                    inTurn = none;
+                }
+                // restart the timer and clear the counts
+                turnTimer.Start(turnTimeBucket);
+                leftCorrectionCount = 0;
+                rightCorrectionCount = 0;
+            }
+        }
+
+        {
+        }
+
+
         /*******************************Detect Course Segment*********************************
 
                 We start in segment 11 at the beginning of the course. Each section transition has a criterion
@@ -1047,87 +1081,241 @@ void loop()
                     Section zero is just the beginning of the course. It kicks off section 11 by starting the timer
                     for the first sprint.
                 */
-                sprintTimer.Start(sec11SprintTime);
                 courseSection = 11;
+
             case 11:
                 /*
+                    ***** Starting line to first turn. End after sprint timer.
+
                     this section starts before the starting line and runs to the first turn (right). It ends after the
                     sprint timer expires
                 */
+                fastSideSpeed = sec11FastSideSpeed;
+                slowSideSpeed = sec11SlowSideSpeed;
+                sprintTimer.Start(sec11SprintTime);
                 if (sprintTimer.Test())
                 {
                     courseSection = 12;
-                    turnState = before; // we are about to track a turn. Set the state of the turn to before.
                 }
-                fastSideSpeed = sec11FastSideSpeed;
-                slowSideSpeed = sec11SlowSideSpeed;
                 break;
 
             case 12:
+
                 /*
-                    This section is the first right turn. It ends when corrections stop and we can do a short sprint to
-                    the next right turn.
-
-                    To monitor the turn, we sequence through three states -- pre-turn, during turn, and no turn detected.
-                    These states are kept in the global variable turnState, with values before, during and done. They sequence
-                    like this:
-
-                    turnState = before;
-                       wait until the first correction event is detected, then set
-                    turnState = during;
-                       monitor how many correction events happen in a fixed time. This is done by the TurnStatus() function.
-                       When it drops below a given threshold, then set
-                    turnState = done;
-                       go on to the next course section the next time around the loop
+                    ***** First right turn. Section ends when the turn ends.
                 */
 
-                // This code should be encapsulated in a function to serve all of the turns that need to be tracked..................
+                // set speeds for the turn
+                fastSideSpeed = sec12FastSideSpeed;
+                slowSideSpeed = sec12SlowSideSpeed;
 
-                if (turnState == before)
-                {
-                    // we are waiting for the start of a left turn, so we test for inCorrection == left
-                    if (inCorrection == left)
-                    {
-                        // starting left turn
-                        turnState = during;
-                        turnDirection = TurnStatus(true); //initialize turn status. This starts the turn status timer.
-                    }
-                }
-                else if (turnState == during)
-                {
-                    // check if our average turn status is none. In this case, our turn is done.
-                    if (TurnStatus(false) == none)
-                    {
-                        turnState = none; //this will get picked up the next time around the loop.
-                    }
-                }
-                else if (turnState == none)
+                // start turn tracking.
+                turnTrackState = waitingForLeftEdge;
+
+                if (inTurn == none)
                 {
                     courseSection = 13;
-
-                    fastSideSpeed = sec13FastSideSpeed;
-                    slowSideSpeed = sec13SlowSideSpeed;
+                    // end turn tracking
+                    turnTrackState = idle;
                 }
                 break;
 
             case 13:
                 /*
-                    This section is the straight secion after the first right turn. It ends when we detect the left road edge, indicating the
-                    beginning of the next right turn.
+                    ***** Straight section to second turn (right). End after sprint timer.
                 */
-                if (inCorrection == left)
+                fastSideSpeed = sec13FastSideSpeed;
+                slowSideSpeed = sec13SlowSideSpeed;
+                
+                sprintTimer.Start(sec13SprintTime);
+                
+                if (sprintTimer.Test())
                 {
                     courseSection = 14;
                 }
-                fastSideSpeed = sec13FastSideSpeed;
-                slowSideSpeed = sec13SlowSideSpeed;
                 break;
 
             case 14:
-            /*
-                This section is the right turn
-            */
+                /*
+                    ***** second right turn. This is directly followed by a left turn, so
+                    we advance switch when we detect a right correction
+                */
+                fastSideSpeed = sec14FastSideSpeed;
+                slowSideSpeed = sec14SlowSideSpeed;
+                if (inCorrection == right)
+                {
+                    courseSection = 15;
+                }
+                break;
 
+            case 15:
+                /*
+                    ***** gentle left turn just before the turn onto the ramp. we advance to the
+                    next section when we detect the left side of the road, where the next right
+                    turn starts.
+                */
+                fastSideSpeed = sec15FastSideSpeed;
+                slowSideSpeed = sec15SlowSideSpeed;
+                if (inCorrection == left)
+                {
+                    courseSection = 21;
+                }
+                break;
+
+            case 21:
+                /*
+                    ***** Right turn onto up ramp. Track the turn until it ends.
+                */
+                fastSideSpeed = sec21FastSideSpeed;
+                slowSideSpeed = sec21SlowSideSpeed;
+
+                // start turn tracking.
+                turnTrackState = waitingForLeftEdge;
+
+                if (inTurn == none)
+                {
+                    courseSection = 22;
+                    // end turn tracking
+                    turnTrackState = idle;
+                }
+                break;
+
+            case 22:
+                /*
+                ***** Straight secion to turn at top of ramp (right). End after sprint timer.
+                */
+                fastSideSpeed = sec22FastSideSpeed;
+                slowSideSpeed = sec22SlowSideSpeed;
+                
+                sprintTimer.Start(sec22SprintTime);
+                
+                if (sprintTimer.Test())
+                {
+                    courseSection = 31;
+                }
+                break;
+
+            case 31:
+                /*
+                    ***** Right turn onto down ramp. Track the turn until it ends.
+                */
+                fastSideSpeed = sec31FastSideSpeed;
+                slowSideSpeed = sec31SlowSideSpeed;
+
+                // start turn tracking.
+                turnTrackState = waitingForLeftEdge;
+
+                if (inTurn == none)
+                {
+                    courseSection = 32;
+                    // end turn tracking
+                    turnTrackState = idle;
+                }
+                break;
+
+             case 32:
+                /*
+                ***** Straight section to turn at bottom of ramp (right). End after sprint timer. Note
+                because this is a down ramp, the sprint is probably slower
+                */
+                fastSideSpeed = sec32FastSideSpeed;
+                slowSideSpeed = sec32SlowSideSpeed;
+                
+                sprintTimer.Start(sec32SprintTime);
+                
+                if (sprintTimer.Test())
+                {
+                    courseSection = 41;
+                }
+                break;
+                
+            case 41:
+                /*
+                    ***** Right turn off of down ramp. Track the turn until it ends.
+                */
+                fastSideSpeed = sec41FastSideSpeed;
+                slowSideSpeed = sec41SlowSideSpeed;
+
+                // start turn tracking.
+                turnTrackState = waitingForLeftEdge;
+
+                if (inTurn == none)
+                {
+                    courseSection = 42;
+                    // end turn tracking
+                    turnTrackState = idle;
+                }
+                break;
+             case 42:
+                /*
+                ***** Straight section to tunnel approach turn (right). End after sprint time.
+                */
+                fastSideSpeed = sec42FastSideSpeed;
+                slowSideSpeed = sec42SlowSideSpeed;
+                
+                sprintTimer.Start(sec42SprintTime);
+                
+                if (sprintTimer.Test())
+                {
+                    courseSection = 43;
+                }
+                break;
+                
+            case 43:
+                /*
+                    ***** Right turn into tunnel. Track the turn until it ends. Because this is a gentle turn, the 
+                    ending point may not be that accurate
+                */
+                fastSideSpeed = sec41FastSideSpeed;
+                slowSideSpeed = sec41SlowSideSpeed;
+
+                // start turn tracking.
+                turnTrackState = waitingForLeftEdge;
+
+                if (inTurn == none)
+                {
+                    courseSection = 44;
+                    // end turn tracking
+                    turnTrackState = idle;
+                }
+                break;
+                
+             case 44:
+                /*
+                ***** Straight section from middle of tunnel to first crosswalk. Ends at crosswalk.
+                */
+                fastSideSpeed = sec44FastSideSpeed;
+                slowSideSpeed = sec44SlowSideSpeed;
+
+                // This section ends at the first crosswalk, which we detect when the first crosswalk
+                // line has been detected and we are checking for the second line. The section will advance
+                // to course section 51 just before we go to pause mode.
+                if (crossLineState == seekingSecondLine)
+                {
+                    courseSection = 51;
+                }
+                break;
+                
+              case 51:
+                /*
+                ***** Straight section from first crosswalk to right turn into the figure 8. Ends with 
+                sprint timer. Note we add the pause delay to the sprint time because it will be advancing
+                during the pause.
+                */
+                fastSideSpeed = sec51FastSideSpeed;
+                slowSideSpeed = sec51SlowSideSpeed;
+                
+                sprintTimer.Start(sec51SprintTime + pauseModeDuration);
+                
+                if (sprintTimer.Test())
+                {
+                    courseSection = 52;
+                }
+                break;
+
+                case 52:
+
+                
             default:
                 break;
         }
@@ -1345,7 +1533,6 @@ void loop()
         //
         if (buttonReader.CheckCycle())  // when the button is pressed and released, we go to standby mode
         {
-            //Serial.println("run to standby");
             ModeRunToStandby();
         }
 
@@ -1358,7 +1545,7 @@ void loop()
             ModeRunToStandby();
         }
     }  // end of run mode code
-    /*                       ___ _  __ ___         _   _   _    _  _   _   _
+    /*                         ___ _  __ ___         _   _   _    _  _   _   _
                                 | |_ (_   |    |\/| / \ | \ |_   /  / \ | \ |_
                                 | |_ __)  |    |  | \_/ |_/ |_   \_ \_/ |_/ |_
     */
@@ -1466,17 +1653,17 @@ void loop()
                 own timer for its refresh rate, so a lot of times when it is called, it does
                 nothing but maintain the current display state.
         */
-
-        static int count = 0;
-        DisplayCount(count);
-        if (testTimer.Test())
-        {
-            testTimer.Start(1000);
-            count++;
-        }
-
+        /*
+            static int count = 0;
+            DisplayCount(count);
+            if (testTimer.Test())
+            {
+                testTimer.Start(1000);
+                count++;
+            }
+        */
     }  // end of test
-    /*                       __ ___           _    _              _   _   _    _  _   _   _
+    /*                         __ ___           _    _              _   _   _    _  _   _   _
                               (_   |  /\  |\ | | \  |_) \_/   |\/| / \ | \ |_   /  / \ | \ |_
                               __)  | /--\ | \| |_/  |_)  |    |  | \_/ |_/ |_   \_ \_/ |_/ |_
     */
@@ -1488,8 +1675,9 @@ void loop()
         // At this point, the Yellow LED has been set by EnterStandbyMode(), and the motors are off.
         // The only thing this mode does is wait for the button to be cycled (pressed and released,) then it starts
         // a timer. When the timer period is finished, we go to run mode.
-        //
-        //update7SegDisplay();
+
+        // refresh 7 segment display with whichever value it is set to display
+        update7SegDisplay();
 
         static boolean countdownToRun = false;  //static variable to hold state between calls to loop()
         if (countdownToRun)
@@ -1497,7 +1685,6 @@ void loop()
             if (standbyToRunTimer.Test())  // poll the timer. When it is finished, enter run mode
             {
                 countdownToRun = false;
-                //Serial.println("entering run mode");
                 ModeStandbyToRun();
             }
         }
@@ -1506,7 +1693,6 @@ void loop()
             // Note: CheckButtonCycle returns true only once per button cycle.
             countdownToRun = true;          //flag that we are in the countdown to run
             standbyToRunTimer.Start(2000);  //Start pause to run timer for 2 second countdown
-            //Serial.println("standby to run start delay");
         }
         else
         {
@@ -1514,7 +1700,7 @@ void loop()
         }
     }  // end of standby
 
-    /*                         _           __  _         _   _   _    _  _   _   _
+    /*                           _           __  _         _   _   _    _  _   _   _
                                 |_) /\  | | (_  |_   |\/| / \ | \ |_   /  / \ | \ |_
                                 |  /--\ |_| __) |_   |  | \_/ |_/ |_   \_ \_/ |_/ |_
     */
@@ -1525,13 +1711,14 @@ void loop()
         // Pause mode code
         //
         pauseLed.Update();  // update pause LED flasher object
-        //update7SegDisplay();
+
+        // update the 7 segment display with whatever value it is set to display
+        update7SegDisplay();
 
         //boolean pauseDone = pauseTimer.Test();   //poll the pause timer
         if (pauseTimer.Test())
         {
             ModePauseToRun();
-            //Serial.println("pause to run");
         }
         //
         // For the rare case that the button is pressed during pause mode:
@@ -1539,7 +1726,6 @@ void loop()
         //
         if (buttonReader.CheckCycle())  // when the button is pressed and released, we go to standby mode
         {
-            //Serial.println("pause to standby");
             ModePauseToStandby();
         }
     }  // end of  pause
