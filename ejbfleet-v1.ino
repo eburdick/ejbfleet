@@ -85,6 +85,10 @@
     divided arbitrarily into sections 7, ending at the beginning of the banked section,
     and section 8, from there to the finish line.
 
+    4/22/2021 Finished course section recognition and tracking, cleaned up code in general.
+    code compiles clean. Ready to test and tune (speeds and sprint delays, maybe turn tracking
+    time slot and thresholds)
+
 */
 #define ANALOGSENSING  //using analog outputs of line sensors and software thresholds.
 
@@ -243,9 +247,11 @@ const int sec71SlowSideSpeed = -200;  // agressive turn
 const int sec72FastSideSpeed = 200;   // sprint to 90 degree right
 const int sec72SlowSideSpeed = 50;    // gentle correction
 const int sec72SprintTime = 1000;
-const int sec73FastSideSpeed = 200;  // sprint to 90 degree right onto banked section
-const int sec73SlowSideSpeed = 50;   // gentle correction
-const int sec73SprintTime = 500;
+const int sec73FastSideSpeed = 130;  // 90 degree right turn to straight section along course top edge
+const int sec73SlowSideSpeed = -130; 
+const int sec74FastSideSpeed = 200;  // sprint to 90 degree right onto banked section
+const int sec74SlowSideSpeed = 50;   // gentle correction
+const int sec74SprintTime = 500;
 
 //CourseSection 8 constants (turn onto banked section to finish line)
 const int sec81FastSideSpeed = 130;  // turning onto banked section
@@ -258,7 +264,8 @@ const int sec83SlowSideSpeed = -130;
 const int sec84FastSideSpeed = 200;  // sprint to finish line
 const int sec84SlowSideSpeed = 50;   // gentle correction
 const int sec84SprintTime = 2000;    // this sprint ends at the finish line, so sprint time probably not needed.
-
+const int sec85FastSideSpeed = 130;  // Finish line speed
+const int sec85SlowSideSpeed = 50;   // gentle correction
 
 
 /*           __  __          __  __   __ __      _____        ___ __
@@ -445,8 +452,6 @@ const int none = 0;
 const int right = 1;
 const int left = -1;
 const int unknown = 2;
-//////////////////////////////////////////////////const int before = 3;
-//////////////////////////////////////////////////const int during = 4;
 const int idle = 5;
 const int waitingForLeftEdge = 6;
 const int waitingForRightEdge = 7;
@@ -576,18 +581,19 @@ void DisplayCount(int num)
         //start the refresh timer. No ports will be written until it times out.
         displayRefreshTimer.Start(displayRefreshPeriod);
     }
-}
-// end of void DisplayCount(int num)
+}// ******************end of void DisplayCount(int num)
 
 // function to update the seven segment display. This just calls the display function
 // above with a given variable. It is called at the beginning of the code for each non-test
 // mode, so we put it here so we can change what it displays in one place.
+
 void update7SegDisplay()
 {
     // update the courseSection display
     DisplayCount(courseSection);
 }
 /*********************************************************************************************/
+
 //
 // Functions for setting motor speeds on the left and right sides. These functions have a signed argument
 // so the motors can be reversed on a negative sign.
@@ -645,7 +651,6 @@ void SetSpeedRight(int speed)
 }
 
 /****************************************************************************************
-
     Mode switching functions. When switching into the modes. These make the one
     time changes at the transition from one mode to the next.
 */
@@ -949,7 +954,7 @@ void loop()
 
     // resd ambient light sensor. Turn on headlights on at the low light threshold and off
     // at the high light threshold
-    //
+    
     int lightLevel = analogRead(analogLightSensorPort);
 
     if (lightLevel < lightsOnThreshold)
@@ -1092,7 +1097,9 @@ void loop()
                 */
                 fastSideSpeed = sec11FastSideSpeed;
                 slowSideSpeed = sec11SlowSideSpeed;
+                
                 sprintTimer.Start(sec11SprintTime);
+                
                 if (sprintTimer.Test())
                 {
                     courseSection = 12;
@@ -1126,9 +1133,9 @@ void loop()
                 */
                 fastSideSpeed = sec13FastSideSpeed;
                 slowSideSpeed = sec13SlowSideSpeed;
-                
+
                 sprintTimer.Start(sec13SprintTime);
-                
+
                 if (sprintTimer.Test())
                 {
                     courseSection = 14;
@@ -1186,9 +1193,9 @@ void loop()
                 */
                 fastSideSpeed = sec22FastSideSpeed;
                 slowSideSpeed = sec22SlowSideSpeed;
-                
+
                 sprintTimer.Start(sec22SprintTime);
-                
+
                 if (sprintTimer.Test())
                 {
                     courseSection = 31;
@@ -1213,22 +1220,22 @@ void loop()
                 }
                 break;
 
-             case 32:
+            case 32:
                 /*
                 ***** Straight section to turn at bottom of ramp (right). End after sprint timer. Note
-                because this is a down ramp, the sprint is probably slower
+                    because this is a down ramp, the sprint is probably slower
                 */
                 fastSideSpeed = sec32FastSideSpeed;
                 slowSideSpeed = sec32SlowSideSpeed;
-                
+
                 sprintTimer.Start(sec32SprintTime);
-                
+
                 if (sprintTimer.Test())
                 {
                     courseSection = 41;
                 }
                 break;
-                
+
             case 41:
                 /*
                     ***** Right turn off of down ramp. Track the turn until it ends.
@@ -1246,28 +1253,29 @@ void loop()
                     turnTrackState = idle;
                 }
                 break;
-             case 42:
+                
+            case 42:
                 /*
                 ***** Straight section to tunnel approach turn (right). End after sprint time.
                 */
                 fastSideSpeed = sec42FastSideSpeed;
                 slowSideSpeed = sec42SlowSideSpeed;
-                
+
                 sprintTimer.Start(sec42SprintTime);
-                
+
                 if (sprintTimer.Test())
                 {
                     courseSection = 43;
                 }
                 break;
-                
+
             case 43:
                 /*
-                    ***** Right turn into tunnel. Track the turn until it ends. Because this is a gentle turn, the 
+                    ***** Right turn into tunnel. Track the turn until it ends. Because this is a gentle turn, the
                     ending point may not be that accurate
                 */
-                fastSideSpeed = sec41FastSideSpeed;
-                slowSideSpeed = sec41SlowSideSpeed;
+                fastSideSpeed = sec43FastSideSpeed;
+                slowSideSpeed = sec43SlowSideSpeed;
 
                 // start turn tracking.
                 turnTrackState = waitingForLeftEdge;
@@ -1279,8 +1287,8 @@ void loop()
                     turnTrackState = idle;
                 }
                 break;
-                
-             case 44:
+
+            case 44:
                 /*
                 ***** Straight section from middle of tunnel to first crosswalk. Ends at crosswalk.
                 */
@@ -1295,30 +1303,279 @@ void loop()
                     courseSection = 51;
                 }
                 break;
-                
-              case 51:
+
+            case 51:
                 /*
-                ***** Straight section from first crosswalk to right turn into the figure 8. Ends with 
-                sprint timer. Note we add the pause delay to the sprint time because it will be advancing
-                during the pause.
+                ***** Straight section from first crosswalk to right turn into the figure 8. Ends with
+                    sprint timer. Note we add the pause delay to the sprint time because it will be advancing
+                    during the pause.
                 */
                 fastSideSpeed = sec51FastSideSpeed;
                 slowSideSpeed = sec51SlowSideSpeed;
-                
+
                 sprintTimer.Start(sec51SprintTime + pauseModeDuration);
-                
+
                 if (sprintTimer.Test())
                 {
                     courseSection = 52;
                 }
                 break;
 
-                case 52:
+            case 52:
+                /*
+                    ***** Right turn into turn toward figure 8. Track the turn until it ends.
+                */
+                fastSideSpeed = sec52FastSideSpeed;
+                slowSideSpeed = sec52SlowSideSpeed;
 
-                
+                // start turn tracking.
+                turnTrackState = waitingForLeftEdge;
+
+                if (inTurn == none)
+                {
+                    courseSection = 53;
+                    // end turn tracking
+                    turnTrackState = idle;
+                }
+                break;
+
+            case 53:
+                /*
+                    ***** Right dogleg in figure 8. Ends at crosswalk.
+                */
+                fastSideSpeed = sec53FastSideSpeed;
+                slowSideSpeed = sec53SlowSideSpeed;
+
+                if (crossLineState == seekingSecondLine)
+                {
+                    courseSection = 61;
+                }
+                break;
+
+            case 61:
+                /*
+                ***** Straight section from second crosswalk to first sharp left turn in figure 8.
+                    ends with sprint timer. We add pause mode duration to sprint time because this
+                    section starts at the beginning of the crosswalk pause;
+                */
+                fastSideSpeed = sec61FastSideSpeed;
+                slowSideSpeed = sec61SlowSideSpeed;
+
+                sprintTimer.Start(sec61SprintTime + pauseModeDuration); //
+
+                if (sprintTimer.Test())
+                {
+                    courseSection = 62;
+                }
+                break;
+
+            case 62:
+                /*
+                    ***** First left turn at bottom of figure 8. Ends when turn ends.
+                */
+                fastSideSpeed = sec62FastSideSpeed;
+                slowSideSpeed = sec62SlowSideSpeed;
+
+                // start turn tracking.
+                turnTrackState = waitingForRightEdge;
+
+                if (inTurn = none)
+                {
+                    courseSection = 63;
+                    turnTrackState = idle;
+                }
+                break;
+
+            case 63:
+                /*
+                ***** Straight section at the bottom of the figure 8. Ends with sprint timer.
+                */
+                fastSideSpeed = sec63FastSideSpeed;
+                slowSideSpeed = sec63SlowSideSpeed;
+
+                sprintTimer.Start(sec63SprintTime);
+
+                if (sprintTimer.Test())
+                {
+                    courseSection = 64;
+                }
+                break;
+
+            case 64:
+                /*
+                    ***** second left turn at bottom of figure 8. Ends when turn ends.
+                */
+                fastSideSpeed = sec64FastSideSpeed;
+                slowSideSpeed = sec64SlowSideSpeed;
+
+                // start turn tracking.
+                turnTrackState = waitingForRightEdge;
+
+                if (inTurn = none)
+                {
+                    courseSection = 65;
+                    turnTrackState = idle;
+                }
+                break;
+
+            case 65:
+                /*
+                    ***** Straight section coming out of the bottom of the figure 8. Sprint to dogleg.
+                    Ends with sprint timer.
+                */
+                fastSideSpeed = sec65FastSideSpeed;
+                slowSideSpeed = sec65SlowSideSpeed;
+
+                sprintTimer.Start(sec65SprintTime);
+
+                if (sprintTimer.Test())
+                {
+                    courseSection = 71;
+                }
+                break;
+            case 71:
+                /*
+                    ***** Right dogleg after crossing center of figure 8 . Ends when turn ends.
+                */
+                fastSideSpeed = sec71FastSideSpeed;
+                slowSideSpeed = sec71SlowSideSpeed;
+
+                // start turn tracking.
+                turnTrackState = waitingForLeftEdge;
+
+                if (inTurn = none)
+                {
+                    courseSection = 72;
+                    turnTrackState = idle;
+                }
+                break;
+            case 72:
+                /*
+                    ***** Straight section coming leaving the dogleg. Sprint to 90 degree right turn.
+                    Ends with sprint timer.
+                */
+                fastSideSpeed = sec72FastSideSpeed;
+                slowSideSpeed = sec72SlowSideSpeed;
+
+                sprintTimer.Start(sec72SprintTime);
+
+                if (sprintTimer.Test())
+                {
+                    courseSection = 73;
+                }
+                break;
+
+            case 73:
+                /*
+                    ***** Right turn to straight section at top edge of course. Sprint to right turn to
+                    banked section. Ends when turn ends.
+                */
+                fastSideSpeed = sec73FastSideSpeed;
+                slowSideSpeed = sec73SlowSideSpeed;
+
+                // start turn tracking.
+                turnTrackState = waitingForLeftEdge;
+
+                if (inTurn = none)
+                {
+                    courseSection = 74;
+                    turnTrackState = idle;
+                }
+                break;
+
+            case 74:
+                /*
+                    ***** Straight section to right turn onto banked section. Sprint to 90 degree right turn.
+                    Ends with sprint timer.
+                */
+                fastSideSpeed = sec74FastSideSpeed;
+                slowSideSpeed = sec74SlowSideSpeed;
+
+                sprintTimer.Start(sec74SprintTime);
+
+                if (sprintTimer.Test())
+                {
+                    courseSection = 81;
+                }
+                break;
+
+            case 81:
+                /*
+                    ***** Right turn to banked section. Ends when turn ends.
+                */
+                fastSideSpeed = sec81FastSideSpeed;
+                slowSideSpeed = sec81SlowSideSpeed;
+
+                // start turn tracking.
+                turnTrackState = waitingForLeftEdge;
+
+                if (inTurn = none)
+                {
+                    courseSection = 82;
+                    turnTrackState = idle;
+                }
+                break;
+
+            case 82:
+                /*
+                    ***** Straight banked section to right turn to home stretch section.
+                */
+                fastSideSpeed = sec82FastSideSpeed;
+                slowSideSpeed = sec82SlowSideSpeed;
+
+                sprintTimer.Start(sec82SprintTime);
+
+                if (sprintTimer.Test())
+                {
+                    courseSection = 83;
+                }
+                break;
+
+            case 83:
+                /*
+                    ***** Right turn to home stretch. Ends when turn ends.
+                */
+                fastSideSpeed = sec83FastSideSpeed;
+                slowSideSpeed = sec83SlowSideSpeed;
+
+                // start turn tracking.
+                turnTrackState = waitingForLeftEdge;
+
+                if (inTurn = none)
+                {
+                    courseSection = 84;
+                    turnTrackState = idle;
+                }
+                break;
+
+            case 84:
+                /*
+                    ***** Straight section to finish line
+                */
+                fastSideSpeed = sec84FastSideSpeed;
+                slowSideSpeed = sec84SlowSideSpeed;
+
+                sprintTimer.Start(sec84SprintTime);
+
+                if (sprintTimer.Test())
+                {
+                    courseSection = 85;
+                }
+                break;
+
+            case 85:
+                /*
+                 ***** Finish line crossing after final sprint (if needed)
+                */
+
+                fastSideSpeed = sec85FastSideSpeed;
+                slowSideSpeed = sec85SlowSideSpeed;
+                break;
+
             default:
                 break;
-        }
+        }  // *************************End of course section id code****************************
+        
 
         /*************************************Line following algorithm************************
 
