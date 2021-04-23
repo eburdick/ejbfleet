@@ -248,7 +248,7 @@ const int sec72FastSideSpeed = 200;   // sprint to 90 degree right
 const int sec72SlowSideSpeed = 50;    // gentle correction
 const int sec72SprintTime = 1000;
 const int sec73FastSideSpeed = 130;  // 90 degree right turn to straight section along course top edge
-const int sec73SlowSideSpeed = -130; 
+const int sec73SlowSideSpeed = -130;
 const int sec74FastSideSpeed = 200;  // sprint to 90 degree right onto banked section
 const int sec74SlowSideSpeed = 50;   // gentle correction
 const int sec74SprintTime = 500;
@@ -457,12 +457,15 @@ const int waitingForLeftEdge = 6;
 const int waitingForRightEdge = 7;
 const int tracking = 8;
 
+
 int inCorrection = none;
 int previousCorrection;
 int turnState;
 int turnDirection;
 int turnTrackState;
 int inTurn;
+
+boolean finishingCrosswalk; // to let course section code know crosswalk pause is finished
 
 int leftCorrectionCount;
 int rightCorrectionCount;
@@ -703,6 +706,8 @@ void ModeRunToStandby()
     // stop motors
     SetSpeedRight(0);
     SetSpeedLeft(0);
+    // set course section back to zero
+    courseSection = 0;
 }
 
 // Mode transition from pause to standby. Handles a button push during pause.
@@ -742,6 +747,8 @@ void ModePauseToRun()
     // we set the firstLineBlockTimer and block line seeking until it expires.
     firstLineBlockTimer.Start(seekFirstLineBlockTime);
     crossLineState = seekingBlocked;
+    // tell section tracking code crosswalk is done
+    finishingCrosswalk = true;
 }
 
 // Mode transition from run to pause. This happens when a double cross line is detected.
@@ -846,6 +853,7 @@ void setup()
     // initialize course section and turn tracking state
     courseSection = 0;
     turnTrackState = idle;
+    finishingCrosswalk = false;
 
     //
     // Read the button. If the button is pressed, set the mode to modeTest.
@@ -954,7 +962,7 @@ void loop()
 
     // resd ambient light sensor. Turn on headlights on at the low light threshold and off
     // at the high light threshold
-    
+
     int lightLevel = analogRead(analogLightSensorPort);
 
     if (lightLevel < lightsOnThreshold)
@@ -1045,13 +1053,13 @@ void loop()
                 if (rightCorrectionCount > turnThreshold)
                 {
                     // we are in a right turn.
-                    inTurn = right;
+                    inTurn = left;
 
                 }
                 else if (leftCorrectionCount > turnThreshold)
                 {
                     // we are in a left turn.
-                    inTurn = left;
+                    inTurn = right;
                 }
                 else
                 {
@@ -1066,8 +1074,13 @@ void loop()
             }
         }
 
+        static int prevTurn = unknown;
+        if (prevTurn != inTurn)
         {
+            Serial.println(inTurn);
+            prevTurn = inTurn;
         }
+
 
 
         /*******************************Detect Course Segment*********************************
@@ -1079,6 +1092,7 @@ void loop()
                 Some transitions are detected when a cross line is detected, like the first crosswalk.
 
         */
+        //Serial.println(courseSection);
         switch (courseSection)
         {
             case 0:
@@ -1087,6 +1101,7 @@ void loop()
                     for the first sprint.
                 */
                 courseSection = 11;
+                sprintTimer.Start(sec11SprintTime);
 
             case 11:
                 /*
@@ -1097,12 +1112,14 @@ void loop()
                 */
                 fastSideSpeed = sec11FastSideSpeed;
                 slowSideSpeed = sec11SlowSideSpeed;
-                
-                sprintTimer.Start(sec11SprintTime);
-                
+
+
                 if (sprintTimer.Test())
                 {
+
                     courseSection = 12;
+                    // start turn tracking.
+                    turnTrackState = waitingForLeftEdge;
                 }
                 break;
 
@@ -1116,14 +1133,12 @@ void loop()
                 fastSideSpeed = sec12FastSideSpeed;
                 slowSideSpeed = sec12SlowSideSpeed;
 
-                // start turn tracking.
-                turnTrackState = waitingForLeftEdge;
-
                 if (inTurn == none)
                 {
                     courseSection = 13;
                     // end turn tracking
                     turnTrackState = idle;
+                    sprintTimer.Start(sec13SprintTime);
                 }
                 break;
 
@@ -1134,11 +1149,11 @@ void loop()
                 fastSideSpeed = sec13FastSideSpeed;
                 slowSideSpeed = sec13SlowSideSpeed;
 
-                sprintTimer.Start(sec13SprintTime);
-
                 if (sprintTimer.Test())
                 {
                     courseSection = 14;
+                    // start turn tracking.
+                    turnTrackState = waitingForLeftEdge;
                 }
                 break;
 
@@ -1149,9 +1164,12 @@ void loop()
                 */
                 fastSideSpeed = sec14FastSideSpeed;
                 slowSideSpeed = sec14SlowSideSpeed;
-                if (inCorrection == right)
+
+                if (inTurn == left)//inCorrection == right)
                 {
                     courseSection = 15;
+                    // start turn tracking.
+                    turnTrackState = waitingForRightEdge;
                 }
                 break;
 
@@ -1163,9 +1181,11 @@ void loop()
                 */
                 fastSideSpeed = sec15FastSideSpeed;
                 slowSideSpeed = sec15SlowSideSpeed;
-                if (inCorrection == left)
+                if (inTurn == right)
                 {
                     courseSection = 21;
+                    // start turn tracking.
+                    //turnTrackState = waitingForLeftEdge;
                 }
                 break;
 
@@ -1176,29 +1196,27 @@ void loop()
                 fastSideSpeed = sec21FastSideSpeed;
                 slowSideSpeed = sec21SlowSideSpeed;
 
-                // start turn tracking.
-                turnTrackState = waitingForLeftEdge;
-
                 if (inTurn == none)
                 {
                     courseSection = 22;
                     // end turn tracking
+                    sprintTimer.Start(sec22SprintTime);
                     turnTrackState = idle;
                 }
                 break;
 
             case 22:
                 /*
-                ***** Straight secion to turn at top of ramp (right). End after sprint timer.
+                ***** Straight section to turn at top of ramp (right). End after sprint timer.
                 */
                 fastSideSpeed = sec22FastSideSpeed;
                 slowSideSpeed = sec22SlowSideSpeed;
 
-                sprintTimer.Start(sec22SprintTime);
-
                 if (sprintTimer.Test())
                 {
                     courseSection = 31;
+                    // start turn tracking.
+                    turnTrackState = waitingForLeftEdge;
                 }
                 break;
 
@@ -1209,13 +1227,11 @@ void loop()
                 fastSideSpeed = sec31FastSideSpeed;
                 slowSideSpeed = sec31SlowSideSpeed;
 
-                // start turn tracking.
-                turnTrackState = waitingForLeftEdge;
-
                 if (inTurn == none)
                 {
                     courseSection = 32;
                     // end turn tracking
+                    sprintTimer.Start(sec32SprintTime);
                     turnTrackState = idle;
                 }
                 break;
@@ -1228,11 +1244,11 @@ void loop()
                 fastSideSpeed = sec32FastSideSpeed;
                 slowSideSpeed = sec32SlowSideSpeed;
 
-                sprintTimer.Start(sec32SprintTime);
-
                 if (sprintTimer.Test())
                 {
                     courseSection = 41;
+                    // start turn tracking.
+                    turnTrackState = waitingForLeftEdge;
                 }
                 break;
 
@@ -1243,17 +1259,15 @@ void loop()
                 fastSideSpeed = sec41FastSideSpeed;
                 slowSideSpeed = sec41SlowSideSpeed;
 
-                // start turn tracking.
-                turnTrackState = waitingForLeftEdge;
-
                 if (inTurn == none)
                 {
                     courseSection = 42;
                     // end turn tracking
+                    sprintTimer.Start(sec42SprintTime);
                     turnTrackState = idle;
                 }
                 break;
-                
+
             case 42:
                 /*
                 ***** Straight section to tunnel approach turn (right). End after sprint time.
@@ -1261,11 +1275,11 @@ void loop()
                 fastSideSpeed = sec42FastSideSpeed;
                 slowSideSpeed = sec42SlowSideSpeed;
 
-                sprintTimer.Start(sec42SprintTime);
-
                 if (sprintTimer.Test())
                 {
                     courseSection = 43;
+                    // start turn tracking.
+                    turnTrackState = waitingForLeftEdge;
                 }
                 break;
 
@@ -1276,9 +1290,6 @@ void loop()
                 */
                 fastSideSpeed = sec43FastSideSpeed;
                 slowSideSpeed = sec43SlowSideSpeed;
-
-                // start turn tracking.
-                turnTrackState = waitingForLeftEdge;
 
                 if (inTurn == none)
                 {
@@ -1295,12 +1306,14 @@ void loop()
                 fastSideSpeed = sec44FastSideSpeed;
                 slowSideSpeed = sec44SlowSideSpeed;
 
-                // This section ends at the first crosswalk, which we detect when the first crosswalk
-                // line has been detected and we are checking for the second line. The section will advance
-                // to course section 51 just before we go to pause mode.
-                if (crossLineState == seekingSecondLine)
+                // This section ends at the end of the first crosswalk pause, which we detect
+                // by tesing the finishingCrosswalk flag, which is set just as the pause finishes.
+
+                if (finishingCrosswalk)
                 {
+                    finishingCrosswalk = false;
                     courseSection = 51;
+                    sprintTimer.Start(sec51SprintTime);
                 }
                 break;
 
@@ -1313,11 +1326,11 @@ void loop()
                 fastSideSpeed = sec51FastSideSpeed;
                 slowSideSpeed = sec51SlowSideSpeed;
 
-                sprintTimer.Start(sec51SprintTime + pauseModeDuration);
-
                 if (sprintTimer.Test())
                 {
                     courseSection = 52;
+                    // start turn tracking.
+                    turnTrackState = waitingForLeftEdge;
                 }
                 break;
 
@@ -1327,9 +1340,6 @@ void loop()
                 */
                 fastSideSpeed = sec52FastSideSpeed;
                 slowSideSpeed = sec52SlowSideSpeed;
-
-                // start turn tracking.
-                turnTrackState = waitingForLeftEdge;
 
                 if (inTurn == none)
                 {
@@ -1341,14 +1351,16 @@ void loop()
 
             case 53:
                 /*
-                    ***** Right dogleg in figure 8. Ends at crosswalk.
+                    ***** Right dogleg in figure 8. Ends at crosswalk when we exit mode pause.
                 */
                 fastSideSpeed = sec53FastSideSpeed;
                 slowSideSpeed = sec53SlowSideSpeed;
 
-                if (crossLineState == seekingSecondLine)
+                if (finishingCrosswalk)
                 {
+                    finishingCrosswalk = false;
                     courseSection = 61;
+                    sprintTimer.Start(sec61SprintTime + pauseModeDuration); //
                 }
                 break;
 
@@ -1361,11 +1373,11 @@ void loop()
                 fastSideSpeed = sec61FastSideSpeed;
                 slowSideSpeed = sec61SlowSideSpeed;
 
-                sprintTimer.Start(sec61SprintTime + pauseModeDuration); //
-
                 if (sprintTimer.Test())
                 {
                     courseSection = 62;
+                    // start turn tracking.
+                    turnTrackState = waitingForRightEdge;
                 }
                 break;
 
@@ -1376,12 +1388,10 @@ void loop()
                 fastSideSpeed = sec62FastSideSpeed;
                 slowSideSpeed = sec62SlowSideSpeed;
 
-                // start turn tracking.
-                turnTrackState = waitingForRightEdge;
-
-                if (inTurn = none)
+                if (inTurn == none)
                 {
                     courseSection = 63;
+                    sprintTimer.Start(sec63SprintTime);
                     turnTrackState = idle;
                 }
                 break;
@@ -1393,11 +1403,11 @@ void loop()
                 fastSideSpeed = sec63FastSideSpeed;
                 slowSideSpeed = sec63SlowSideSpeed;
 
-                sprintTimer.Start(sec63SprintTime);
-
                 if (sprintTimer.Test())
                 {
                     courseSection = 64;
+                    // start turn tracking.
+                    turnTrackState = waitingForRightEdge;
                 }
                 break;
 
@@ -1408,12 +1418,10 @@ void loop()
                 fastSideSpeed = sec64FastSideSpeed;
                 slowSideSpeed = sec64SlowSideSpeed;
 
-                // start turn tracking.
-                turnTrackState = waitingForRightEdge;
-
-                if (inTurn = none)
+                if (inTurn == none)
                 {
                     courseSection = 65;
+                    sprintTimer.Start(sec65SprintTime);
                     turnTrackState = idle;
                 }
                 break;
@@ -1426,13 +1434,14 @@ void loop()
                 fastSideSpeed = sec65FastSideSpeed;
                 slowSideSpeed = sec65SlowSideSpeed;
 
-                sprintTimer.Start(sec65SprintTime);
-
                 if (sprintTimer.Test())
                 {
                     courseSection = 71;
+                    // start turn tracking.
+                    turnTrackState = waitingForLeftEdge;
                 }
                 break;
+
             case 71:
                 /*
                     ***** Right dogleg after crossing center of figure 8 . Ends when turn ends.
@@ -1440,15 +1449,14 @@ void loop()
                 fastSideSpeed = sec71FastSideSpeed;
                 slowSideSpeed = sec71SlowSideSpeed;
 
-                // start turn tracking.
-                turnTrackState = waitingForLeftEdge;
-
-                if (inTurn = none)
+                if (inTurn == none)
                 {
                     courseSection = 72;
+                    sprintTimer.Start(sec72SprintTime);
                     turnTrackState = idle;
                 }
                 break;
+
             case 72:
                 /*
                     ***** Straight section coming leaving the dogleg. Sprint to 90 degree right turn.
@@ -1457,11 +1465,11 @@ void loop()
                 fastSideSpeed = sec72FastSideSpeed;
                 slowSideSpeed = sec72SlowSideSpeed;
 
-                sprintTimer.Start(sec72SprintTime);
-
                 if (sprintTimer.Test())
                 {
                     courseSection = 73;
+                    // start turn tracking.
+                    turnTrackState = waitingForLeftEdge;
                 }
                 break;
 
@@ -1473,12 +1481,10 @@ void loop()
                 fastSideSpeed = sec73FastSideSpeed;
                 slowSideSpeed = sec73SlowSideSpeed;
 
-                // start turn tracking.
-                turnTrackState = waitingForLeftEdge;
-
-                if (inTurn = none)
+                if (inTurn == none)
                 {
                     courseSection = 74;
+                    sprintTimer.Start(sec74SprintTime);
                     turnTrackState = idle;
                 }
                 break;
@@ -1491,11 +1497,11 @@ void loop()
                 fastSideSpeed = sec74FastSideSpeed;
                 slowSideSpeed = sec74SlowSideSpeed;
 
-                sprintTimer.Start(sec74SprintTime);
-
                 if (sprintTimer.Test())
                 {
                     courseSection = 81;
+                    // start turn tracking.
+                    turnTrackState = waitingForLeftEdge;
                 }
                 break;
 
@@ -1506,12 +1512,10 @@ void loop()
                 fastSideSpeed = sec81FastSideSpeed;
                 slowSideSpeed = sec81SlowSideSpeed;
 
-                // start turn tracking.
-                turnTrackState = waitingForLeftEdge;
-
-                if (inTurn = none)
+                if (inTurn == none)
                 {
                     courseSection = 82;
+                    sprintTimer.Start(sec82SprintTime);
                     turnTrackState = idle;
                 }
                 break;
@@ -1523,11 +1527,11 @@ void loop()
                 fastSideSpeed = sec82FastSideSpeed;
                 slowSideSpeed = sec82SlowSideSpeed;
 
-                sprintTimer.Start(sec82SprintTime);
-
                 if (sprintTimer.Test())
                 {
                     courseSection = 83;
+                    // start turn tracking.
+                    turnTrackState = waitingForLeftEdge;
                 }
                 break;
 
@@ -1538,12 +1542,10 @@ void loop()
                 fastSideSpeed = sec83FastSideSpeed;
                 slowSideSpeed = sec83SlowSideSpeed;
 
-                // start turn tracking.
-                turnTrackState = waitingForLeftEdge;
-
-                if (inTurn = none)
+                if (inTurn == none)
                 {
                     courseSection = 84;
+                    sprintTimer.Start(sec84SprintTime);
                     turnTrackState = idle;
                 }
                 break;
@@ -1554,8 +1556,6 @@ void loop()
                 */
                 fastSideSpeed = sec84FastSideSpeed;
                 slowSideSpeed = sec84SlowSideSpeed;
-
-                sprintTimer.Start(sec84SprintTime);
 
                 if (sprintTimer.Test())
                 {
@@ -1575,7 +1575,7 @@ void loop()
             default:
                 break;
         }  // *************************End of course section id code****************************
-        
+
 
         /*************************************Line following algorithm************************
 
