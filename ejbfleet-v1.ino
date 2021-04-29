@@ -89,6 +89,16 @@
     code compiles clean. Ready to test and tune (speeds and sprint delays, maybe turn tracking
     time slot and thresholds)
 
+    4/28/2021 After some testing on the track, added leftRightBias to skew the straight
+    sections to the right or left. Lots of time debugging that because I overflowed
+    the 8 bit unsigned integer that goes to the motor shield. Started tuning the speeds
+    and times, but a ways to go yet. May need to use the gyro to validate the turns, but
+    this would not be that hard given the yaw test code that is already in the test part
+    of this code. Main issue is premature sequencing of track sections because of the 
+    simplistic detection of curve completion and depending too much on timers when 
+    there are spots in the course, especially at the bottom and top of the up ramp, where
+    the robot slows down because of losing traction.
+
 */
 #define ANALOGSENSING  //using analog outputs of line sensors and software thresholds.
 
@@ -109,7 +119,7 @@
     Global variables and constants. Most of these could be put into functions functions
     as local static variables, but it is easier to keep track of them as globals.
 */
-/*  ___      __ __           __   ___     __  __ __     __     __  __
+/* ___      __ __           __   ___     __  __ __     __     __  __
     | ||\/||_ (_    /\ |\ ||  \   | |__||__)|_ (_ |__|/  \|  |  \(_
     | ||  ||____)  /--\| \||__/   | |  || \ |____)|  |\__/|__|__/__)
 */
@@ -171,18 +181,36 @@ int courseSection; //state variable stores which section we are in. Initialized 
 // tens place is the main section number, and the ones place is the sub-section number.
 // These constants specify motor speeds and sprint times for straight sections.
 //
+// Notes:
+//
+// Motor speeds to the motor shield are unsigned 8 bit integers, so they range from 0 to 255. 
+// If there is a leftRightBias set, then the sum of the speed
+// number and the bias number must be in this range.
+//
+// FastSideSpeed is the speed the robot moves when it is not turning. LeftRightBias is added
+// to the left side and subtracted from the right side to turn straight runs into constant
+// curves. If the bias is positive, it will curve to the right, and if it is negative, it will
+// curve to the left.
+//
+// SprintTime is the number of milliseconds to stay in a straight section. The next section,
+// always a turn, starts at the end of this time. Too long a sprint time may cause a turn to be
+// missed because of an overrun. Too short can result in interpreting a small correction during 
+// the straight section as the turn, resulting in a premature section advance, throuwing the
+// robot out of sync with the track.
 
 // courseSection 1 constants (starting line to turn onto ramp)
-const int sec11FastSideSpeed = 255;   // speed for starting line to first turn
+const int sec11FastSideSpeed = 240;   // speed for starting line to first turn
 const int sec11SlowSideSpeed = 50;    // gentle correction
-const int sec11SprintTime = 2000;     // duration of sprint time before starting turn
+const int sec11SprintTime = 2300;     // duration of sprint time before starting turn
+const int sec11LeftRightBias = 0;     
 // first turn (right)
 const int sec12FastSideSpeed = 100;   // fast side speed for first turn right 60 degrees
 const int sec12SlowSideSpeed = -200;  // slow side speed for first turn
 // straight section
 const int sec13FastSideSpeed  = 200;  // speed for short sprint between right turns
 const int sec13SlowSideSpeed = 50;    // gentle correction
-const int sec13SprintTime = 200;      // duration of sprint before second turn
+const int sec13SprintTime = 500;      // duration of sprint before second turn
+const int sec13LeftRightBias = 0;
 // second turn (right)
 const int sec14FastSideSpeed = 130;   // fast side speed for second turn right 80 degrees
 const int sec14SlowSideSpeed = -130;  // slow side speed for gentle turns
@@ -191,54 +219,62 @@ const int sec15FastSideSpeed = 130;   // fast side speed for third turn left 80 
 const int sec15SlowSideSpeed = -130;  // slow side speed for third turn
 
 // courseSection 2 constants (turn onto ramp to turn at the top of the ramp)
-const int sec21FastSideSpeed = 130;   // fast side speed for turn onto ramp right 140 degrees
-const int sec21SlowSideSpeed = -130;  // slow side speed for turn onto ramp
-const int sec22FastSideSpeed = 200;   // speed up the ramp
+const int sec21FastSideSpeed = 150;   // fast side speed for turn onto ramp right 140 degrees
+const int sec21SlowSideSpeed = -150;  // slow side speed for turn onto ramp
+const int sec22FastSideSpeed = 240;   // speed up the ramp
 const int sec22SlowSideSpeed = 50;    // gentle correction
-const int sec22SprintTime = 500;      // duration of sprint time before ramp turn
+const int sec22SprintTime = 2500;      // duration of sprint time before ramp turn
+const int sec22LeftRightBias = 0;     // stay to right to avoid premature right turn
 
 // courseSection 3 contants (turn onto down ramp to turn onto tunnel approach)
 const int sec31FastSideSpeed = 130;  // turn at top of ramp right 90 degrees
 const int sec31SlowSideSpeed = -130;
 const int sec32FastSideSpeed = 100;  // speed down the ramp
 const int sec32SlowSideSpeed = 0;    // gentle correction
-const int sec32SprintTime = 800;     // duration of sprint time before turn at bottom
+const int sec32SprintTime = 1600;     // duration of sprint time before turn at bottom
+const int sec32LeftRightBias = 20;    // stay to right to avoid premature right turn
 
 // courseSection 4 constants (turn onto tunnel approach, through tunnel to first crosswalk
 const int sec41FastSideSpeed = 130;  // first turn at bottom of ramp right 90 degrees
 const int sec41SlowSideSpeed = -130;
 const int sec42FastSideSpeed = 200;  // short sprint after turn
 const int sec42SlowSideSpeed = 50;   // gentle correction
-const int sec42SprintTime = 500;
+const int sec42SprintTime = 300;
+const int sec42LeftRightBias = 0;
 const int sec43FastSideSpeed = 130;  // tunnel approach curve right 180 degrees
 const int sec43SlowSideSpeed = -130;
 const int sec44FastSideSpeed = 200;  // short sprint to first crosswalk
 const int sec44SlowSideSpeed = 50;   // gentle correction
 const int sec44SprintTime = 300;
+const int sec44LeftRightBias = 0;
 
 // courseSection 5 constants (up to second crosswalk)
 const int sec51FastSideSpeed = 200;  // short sprint to turn
 const int sec51SlowSideSpeed = 50;   // gentle correction
 const int sec51SprintTime = 200;
+const int sec51LeftRightBias = 0;
 const int sec52FastSideSpeed = 130;  // first turn right 90 degrees
 const int sec52SlowSideSpeed = -130;
 const int sec53FastSideSpeed = 130;  // dogleg right 45 degrees
 const int sec53SlowSideSpeed = -130;
 
 // courseSection 6 constants (bottom of figure 8 to second dogleg, passing three cross lines)
-const int sec61FastSideSpeed = 200;  // sprint to first turn
+const int sec61FastSideSpeed = 130;  // sprint to first turn
 const int sec61SlowSideSpeed = 50;   // gentle correction
 const int sec61SprintTime = 500;
+const int sec61LeftRightBias = 0;
 const int sec62FastSideSpeed = 130;  // first turn at bottom of fig 8 left 120 degrees
 const int sec62SlowSideSpeed = -130;
 const int sec63FastSideSpeed = 200;  // sprint to second turn
 const int sec63SlowSideSpeed = 50;   // gentle correction
 const int sec63SprintTime = 300;
+const int sec63LeftRightBias = 0;
 const int sec64FastSideSpeed = 130;  // second turn at bottom of fig 8 left 160 degrees
 const int sec64SlowSideSpeed = -130;
 const int sec65FastSideSpeed = 200;  // sprint to dogleg
 const int sec65SlowSideSpeed = 50;   // gentle correction
 const int sec65SprintTime = 500;
+const int sec65LeftRightBias = 0;
 
 // courseSection 7 constants (detecting dogleg and turning right, passing two cross lines, then 90 degree right,
 // straight sprint up to turn onto banked section
@@ -247,11 +283,13 @@ const int sec71SlowSideSpeed = -200;  // agressive turn
 const int sec72FastSideSpeed = 200;   // sprint to 90 degree right
 const int sec72SlowSideSpeed = 50;    // gentle correction
 const int sec72SprintTime = 1000;
+const int sec72LeftRightBias = 0;
 const int sec73FastSideSpeed = 130;  // 90 degree right turn to straight section along course top edge
 const int sec73SlowSideSpeed = -130;
 const int sec74FastSideSpeed = 200;  // sprint to 90 degree right onto banked section
 const int sec74SlowSideSpeed = 50;   // gentle correction
 const int sec74SprintTime = 500;
+const int sec74LeftRightBias = 0;
 
 //CourseSection 8 constants (turn onto banked section to finish line)
 const int sec81FastSideSpeed = 130;  // turning onto banked section
@@ -259,11 +297,13 @@ const int sec81SlowSideSpeed = -130;
 const int sec82FastSideSpeed = 200;  // sprint on banked section
 const int sec82SlowSideSpeed = 50;   // gentle correction
 const int sec82SprintTime = 2000;    // long section
+const int sec82LeftRightBias = 0;
 const int sec83FastSideSpeed = 130;  // final turn
 const int sec83SlowSideSpeed = -130;
 const int sec84FastSideSpeed = 200;  // sprint to finish line
 const int sec84SlowSideSpeed = 50;   // gentle correction
 const int sec84SprintTime = 2000;    // this sprint ends at the finish line, so sprint time probably not needed.
+const int sec84LeftRightBias = 0;
 const int sec85FastSideSpeed = 130;  // Finish line speed
 const int sec85SlowSideSpeed = 50;   // gentle correction
 
@@ -418,6 +458,11 @@ int LFMotorSpeed;
 int RFMotorSpeed;
 int LRMotorSpeed;
 int RRMotorSpeed;
+
+// Motor left right bias. This value is added to the left motor speed and subtracted from
+// the right motor speed to bias the direction to the left (leftRightBias < 0) or to the right
+// (leftRightBias > 0). It is for when we want to hug the right or left in a straight run.
+int leftRightBias;
 
 //motor speeds for line following. Negative is reverse, and fastSideSpeed is the
 //straight drive speed of the robot. These are assigned from the motor speeds
@@ -604,6 +649,9 @@ void update7SegDisplay()
 // Note: We assume both left motors run the same speed and both right motors run the same speed. If this turns out
 // not to be the case, some of this code will need to be changed.
 //
+// The motor speeds are modified by the global leftRightBias, which skews the direction to the right or left, mosly
+// for straight sections where we want to be hugging the right or left side.
+//
 void SetSpeedLeft(int speed)
 {
     if (speed == 0)
@@ -615,16 +663,22 @@ void SetSpeedLeft(int speed)
     {
         LFMotor->run(FORWARD);
         LRMotor->run(FORWARD);
+        // To skew right, we add a little speed to the left side. (bias > 0)
+        // To skew left, we subtract a little speed from the left side. (bias < 0)
+        LFMotorSpeed = speed + leftRightBias;
+        LRMotorSpeed = speed + leftRightBias;
     }
-    else
+    else //speed < 0
     {
+        // Reverse the motors and take the absolute value of the speed to make it positive.
         LFMotor->run(BACKWARD);
         LRMotor->run(BACKWARD);
         speed = abs(speed);
+        // Wheels are turning in reverse. The skew right, we want to slow them down, and to 
+        // skew left, we want to speed them up, so the sign is reversed from the forward case.
+        LFMotorSpeed = speed - leftRightBias;
+        LRMotorSpeed = speed - leftRightBias;
     }
-    LFMotorSpeed = 80;
-    LFMotorSpeed = speed;
-    LRMotorSpeed = speed;
     LFMotor->setSpeed(LFMotorSpeed);
     LRMotor->setSpeed(LRMotorSpeed);
 }
@@ -640,15 +694,22 @@ void SetSpeedRight(int speed)
     {
         RFMotor->run(FORWARD);
         RRMotor->run(FORWARD);
+        // To skew right, we subtract a little speed from the right side. (bias > 0)
+        // To skew left, we add a little speed to the right side. (bias < 0)
+        RFMotorSpeed = speed - leftRightBias;
+        RRMotorSpeed = speed - leftRightBias;
     }
     else
     {
         RFMotor->run(BACKWARD);
         RRMotor->run(BACKWARD);
         speed = abs(speed);
+        // Wheels are turning in reverse. The skew right, we want to speed them up, and to 
+        // skew left, we want to slow them down, so the sign is reversed from the forward case.
+        RFMotorSpeed = speed + leftRightBias;
+        RRMotorSpeed = speed + leftRightBias;
+        
     }
-    RFMotorSpeed = speed;
-    RRMotorSpeed = speed;
     RFMotor->setSpeed(RFMotorSpeed);
     RRMotor->setSpeed(RRMotorSpeed);
 }
@@ -854,6 +915,7 @@ void setup()
     courseSection = 0;
     turnTrackState = idle;
     finishingCrosswalk = false;
+    leftRightBias = 0;
 
     //
     // Read the button. If the button is pressed, set the mode to modeTest.
@@ -1091,8 +1153,19 @@ void loop()
                 opposite road edge, eg a right turn ends when the right edge of the roadway is detected.
                 Some transitions are detected when a cross line is detected, like the first crosswalk.
 
+                Turns are tracked from the first time we detect the outside edge of the road until the time
+                we see a small number or correction events. The turn tracking code will start by looking for
+                the specified correction (e.g. turnTrackState = waitingForLeftEdge) As it tracks, it periodically 
+                sets the global variable inTurn. To detect the end of a turn, we look for inTurn == none, at which 
+                point we advance to the next track section. There are places where we will bias our straight runs
+                to the right of left to avoid falsely detecting a curve starting edge. E.G. when we expect a right
+                turn, we might bias to the right to avoid any left edge encounters. This becomes important if there
+                is a mechanical hesitation at the beginning of a timed run, and the timer expires significantly
+                before the expected turn, resulting in seeing the initiating correction followed by the inTurn == none.
+                (Another way of dealing with this might be using the gyro to detect the real turn before looking for
+                the end of the turn)
+
         */
-        //Serial.println(courseSection);
         switch (courseSection)
         {
             case 0:
@@ -1102,6 +1175,7 @@ void loop()
                 */
                 courseSection = 11;
                 sprintTimer.Start(sec11SprintTime);
+                leftRightBias = sec11LeftRightBias;
 
             case 11:
                 /*
@@ -1113,13 +1187,12 @@ void loop()
                 fastSideSpeed = sec11FastSideSpeed;
                 slowSideSpeed = sec11SlowSideSpeed;
 
-
                 if (sprintTimer.Test())
                 {
-
                     courseSection = 12;
                     // start turn tracking.
                     turnTrackState = waitingForLeftEdge;
+                    leftRightBias = 0;
                 }
                 break;
 
@@ -1139,6 +1212,7 @@ void loop()
                     // end turn tracking
                     turnTrackState = idle;
                     sprintTimer.Start(sec13SprintTime);
+                    leftRightBias = sec13LeftRightBias;
                 }
                 break;
 
@@ -1154,6 +1228,8 @@ void loop()
                     courseSection = 14;
                     // start turn tracking.
                     turnTrackState = waitingForLeftEdge;
+                    leftRightBias = 0;
+
                 }
                 break;
 
@@ -1202,6 +1278,7 @@ void loop()
                     // end turn tracking
                     sprintTimer.Start(sec22SprintTime);
                     turnTrackState = idle;
+                    leftRightBias = sec22LeftRightBias;
                 }
                 break;
 
@@ -1211,12 +1288,15 @@ void loop()
                 */
                 fastSideSpeed = sec22FastSideSpeed;
                 slowSideSpeed = sec22SlowSideSpeed;
+                leftRightBias = sec22LeftRightBias;
 
                 if (sprintTimer.Test())
                 {
                     courseSection = 31;
                     // start turn tracking.
                     turnTrackState = waitingForLeftEdge;
+                    leftRightBias = 0;
+
                 }
                 break;
 
@@ -1232,6 +1312,7 @@ void loop()
                     courseSection = 32;
                     // end turn tracking
                     sprintTimer.Start(sec32SprintTime);
+                    leftRightBias = sec32LeftRightBias;
                     turnTrackState = idle;
                 }
                 break;
@@ -1243,12 +1324,14 @@ void loop()
                 */
                 fastSideSpeed = sec32FastSideSpeed;
                 slowSideSpeed = sec32SlowSideSpeed;
+                leftRightBias = sec32LeftRightBias;
 
                 if (sprintTimer.Test())
                 {
                     courseSection = 41;
                     // start turn tracking.
                     turnTrackState = waitingForLeftEdge;
+                    leftRightBias = 0;
                 }
                 break;
 
@@ -1264,6 +1347,7 @@ void loop()
                     courseSection = 42;
                     // end turn tracking
                     sprintTimer.Start(sec42SprintTime);
+                    leftRightBias = sec42LeftRightBias;
                     turnTrackState = idle;
                 }
                 break;
@@ -1280,6 +1364,7 @@ void loop()
                     courseSection = 43;
                     // start turn tracking.
                     turnTrackState = waitingForLeftEdge;
+                    leftRightBias = 0;
                 }
                 break;
 
@@ -1314,6 +1399,7 @@ void loop()
                     finishingCrosswalk = false;
                     courseSection = 51;
                     sprintTimer.Start(sec51SprintTime);
+                    leftRightBias = sec51LeftRightBias;
                 }
                 break;
 
@@ -1331,6 +1417,7 @@ void loop()
                     courseSection = 52;
                     // start turn tracking.
                     turnTrackState = waitingForLeftEdge;
+                    leftRightBias = 0;
                 }
                 break;
 
@@ -1361,6 +1448,7 @@ void loop()
                     finishingCrosswalk = false;
                     courseSection = 61;
                     sprintTimer.Start(sec61SprintTime + pauseModeDuration); //
+                    leftRightBias = sec61LeftRightBias;
                 }
                 break;
 
@@ -1378,6 +1466,7 @@ void loop()
                     courseSection = 62;
                     // start turn tracking.
                     turnTrackState = waitingForRightEdge;
+                    leftRightBias = 0;
                 }
                 break;
 
@@ -1392,6 +1481,7 @@ void loop()
                 {
                     courseSection = 63;
                     sprintTimer.Start(sec63SprintTime);
+                    leftRightBias = sec63LeftRightBias;
                     turnTrackState = idle;
                 }
                 break;
@@ -1408,6 +1498,7 @@ void loop()
                     courseSection = 64;
                     // start turn tracking.
                     turnTrackState = waitingForRightEdge;
+                    leftRightBias = 0;
                 }
                 break;
 
@@ -1422,6 +1513,7 @@ void loop()
                 {
                     courseSection = 65;
                     sprintTimer.Start(sec65SprintTime);
+                    leftRightBias = sec65LeftRightBias;
                     turnTrackState = idle;
                 }
                 break;
@@ -1439,6 +1531,7 @@ void loop()
                     courseSection = 71;
                     // start turn tracking.
                     turnTrackState = waitingForLeftEdge;
+                    leftRightBias = 0;
                 }
                 break;
 
@@ -1453,6 +1546,7 @@ void loop()
                 {
                     courseSection = 72;
                     sprintTimer.Start(sec72SprintTime);
+                    leftRightBias = sec72LeftRightBias;
                     turnTrackState = idle;
                 }
                 break;
@@ -1470,6 +1564,7 @@ void loop()
                     courseSection = 73;
                     // start turn tracking.
                     turnTrackState = waitingForLeftEdge;
+                    leftRightBias = 0;
                 }
                 break;
 
@@ -1485,6 +1580,7 @@ void loop()
                 {
                     courseSection = 74;
                     sprintTimer.Start(sec74SprintTime);
+                    leftRightBias = sec74LeftRightBias;
                     turnTrackState = idle;
                 }
                 break;
@@ -1502,6 +1598,7 @@ void loop()
                     courseSection = 81;
                     // start turn tracking.
                     turnTrackState = waitingForLeftEdge;
+                    leftRightBias = 0;
                 }
                 break;
 
@@ -1516,6 +1613,7 @@ void loop()
                 {
                     courseSection = 82;
                     sprintTimer.Start(sec82SprintTime);
+                    leftRightBias = sec82LeftRightBias;
                     turnTrackState = idle;
                 }
                 break;
@@ -1532,6 +1630,7 @@ void loop()
                     courseSection = 83;
                     // start turn tracking.
                     turnTrackState = waitingForLeftEdge;
+                    leftRightBias = 0;
                 }
                 break;
 
@@ -1546,6 +1645,7 @@ void loop()
                 {
                     courseSection = 84;
                     sprintTimer.Start(sec84SprintTime);
+                    leftRightBias = sec84LeftRightBias;
                     turnTrackState = idle;
                 }
                 break;
@@ -1560,6 +1660,7 @@ void loop()
                 if (sprintTimer.Test())
                 {
                     courseSection = 85;
+                    leftRightBias = 0;
                 }
                 break;
 
