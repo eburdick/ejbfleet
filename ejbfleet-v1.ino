@@ -94,34 +94,43 @@
     the 8 bit unsigned integer that goes to the motor shield. Started tuning the speeds
     and times, but a ways to go yet. May need to use the gyro to validate the turns, but
     this would not be that hard given the yaw test code that is already in the test part
-    of this code. Main issue is premature sequencing of track sections because of the 
-    simplistic detection of curve completion and depending too much on timers when 
+    of this code. Main issue is premature sequencing of track sections because of the
+    simplistic detection of curve completion and depending too much on timers when
     there are spots in the course, especially at the bottom and top of the up ramp, where
     the robot slows down because of losing traction.
+
+    4/29/2021 Added some gyro code using the adafruit mpu4050 library and deleting the
+    old pitch, roll and yaw stuff. The test code works for tracking rotation about the
+    Z axis with ranges and filter values set for what I think we want. Also experimented
+    with compensation for a small amount of offset when there is no rotation. This works
+    well enough. Started designing a better method for detecting and tracking turns using
+    the gyro and an improved method for tracking course sections. Not a huge change, but
+    should be much more reliable. The design is detailed in a comment block after the 
+    current turn tracking code.
 
 */
 #define ANALOGSENSING  //using analog outputs of line sensors and software thresholds.
 
 #include <arduino.h>
+#include <Adafruit_MPU6050.h> //Adafruit library for for inertial measurement unit
+#include <Adafruit_Sensor.h> //Adafruit sensor library (for reading MPU6050 sensors
+#include <Adafruit_MotorShield.h>
 #include <Wire.h>    // I2C library
 #include <SD.h>      // SD card library
 #include <SPI.h>     // Serial Peripheral Interface library
 #include <RTClib.h>  // Real Time Clock library
-//#include <EEPROM.h>           // EEPROM library
-#include <Adafruit_MotorShield.h>
-#include <MPU6050.h>            // IMU library (accelerometers, gyros) from https://github.com/jarzebski/Arduino-MPU6050
 #include "blinkled_class.hh"    //support code for blinking LEDs
 #include "timer_class.hh"       //support code for non-blocking timers
-#include "clean_edge_class.hh"  //support code for edge cleaned sensor reads
+#include "clean_edge_class.hh"  //support code for edge cleaned physical sensor reads (button, line sensor)
 
 
 /*
     Global variables and constants. Most of these could be put into functions functions
     as local static variables, but it is easier to keep track of them as globals.
 */
-/* ___      __ __           __   ___     __  __ __     __     __  __
-    | ||\/||_ (_    /\ |\ ||  \   | |__||__)|_ (_ |__|/  \|  |  \(_
-    | ||  ||____)  /--\| \||__/   | |  || \ |____)|  |\__/|__|__/__)
+/*  ___      __ __           __   ___     __  __ __     __     __  __
+     | ||\/||_ (_    /\ |\ ||  \   | |__||__)|_ (_ |__|/  \|  |  \(_
+     | ||  ||____)  /--\| \||__/   | |  || \ |____)|  |\__/|__|__/__)
 */
 
 //Blinking LED on and off times
@@ -183,7 +192,7 @@ int courseSection; //state variable stores which section we are in. Initialized 
 //
 // Notes:
 //
-// Motor speeds to the motor shield are unsigned 8 bit integers, so they range from 0 to 255. 
+// Motor speeds to the motor shield are unsigned 8 bit integers, so they range from 0 to 255.
 // If there is a leftRightBias set, then the sum of the speed
 // number and the bias number must be in this range.
 //
@@ -194,7 +203,7 @@ int courseSection; //state variable stores which section we are in. Initialized 
 //
 // SprintTime is the number of milliseconds to stay in a straight section. The next section,
 // always a turn, starts at the end of this time. Too long a sprint time may cause a turn to be
-// missed because of an overrun. Too short can result in interpreting a small correction during 
+// missed because of an overrun. Too short can result in interpreting a small correction during
 // the straight section as the turn, resulting in a premature section advance, throuwing the
 // robot out of sync with the track.
 
@@ -202,7 +211,7 @@ int courseSection; //state variable stores which section we are in. Initialized 
 const int sec11FastSideSpeed = 240;   // speed for starting line to first turn
 const int sec11SlowSideSpeed = 50;    // gentle correction
 const int sec11SprintTime = 2300;     // duration of sprint time before starting turn
-const int sec11LeftRightBias = 0;     
+const int sec11LeftRightBias = 0;
 // first turn (right)
 const int sec12FastSideSpeed = 100;   // fast side speed for first turn right 60 degrees
 const int sec12SlowSideSpeed = -200;  // slow side speed for first turn
@@ -317,6 +326,11 @@ const int sec85SlowSideSpeed = 50;   // gentle correction
 // HIGH. In the software, we pass this address to the imu.begin method.
 const uint8_t imuI2Caddress = 0x69;
 
+// gyro drift rate is how much the gyro is off. This particular gyro is off by
+// the following number based on just watching the numbers change on the serial
+// monitor as they are read. This should be good enough.
+const double imuGyroZDrift = -0.00143;
+
 // LED port definitions
 const int ledPortYellow = 25;  // Standby LED
 const int ledPortRed = 27;     // Stop flasher LED
@@ -430,7 +444,7 @@ CleanEdge buttonReader = CleanEdge(buttonPort, buttonDebounceDelay, unpressed);
 CleanEdge centerLineSensorReader = CleanEdge(digLineSensorPortMiddle, middleLineSensorEdgeDelay, light);
 
 // Accelerometer/gyro (IMU) interfaces
-MPU6050 imu;
+Adafruit_MPU6050 imu;
 
 //Real time clock
 RTC_PCF8523 realTimeClock;
@@ -520,12 +534,9 @@ int count = 0;
 
 // IMU globals (accelerometer, gyro)
 
-float timeStep = 0.01;               //Sample time for gyro rate incremental integration in seconds
-long imuTimeStep = timeStep * 1000;  //timeStep for sample timer in milliseconds
-// Pitch, Roll and Yaw values
-float pitch = 0;
-float roll = 0;
-float yaw = 0;
+//Sample time for gyro rate incremental integration in seconds
+unsigned long imuTimeStep = 10;  //timeStep for sample timer in milliseconds
+
 
 /*      ___     ___      __         _____  __      __
     /  \ | ||  | | \_/  |_ /  \|\ |/   | |/  \|\ |(_
@@ -674,7 +685,7 @@ void SetSpeedLeft(int speed)
         LFMotor->run(BACKWARD);
         LRMotor->run(BACKWARD);
         speed = abs(speed);
-        // Wheels are turning in reverse. The skew right, we want to slow them down, and to 
+        // Wheels are turning in reverse. The skew right, we want to slow them down, and to
         // skew left, we want to speed them up, so the sign is reversed from the forward case.
         LFMotorSpeed = speed - leftRightBias;
         LRMotorSpeed = speed - leftRightBias;
@@ -704,11 +715,11 @@ void SetSpeedRight(int speed)
         RFMotor->run(BACKWARD);
         RRMotor->run(BACKWARD);
         speed = abs(speed);
-        // Wheels are turning in reverse. The skew right, we want to speed them up, and to 
+        // Wheels are turning in reverse. The skew right, we want to speed them up, and to
         // skew left, we want to slow them down, so the sign is reversed from the forward case.
         RFMotorSpeed = speed + leftRightBias;
         RRMotorSpeed = speed + leftRightBias;
-        
+
     }
     RFMotor->setSpeed(RFMotorSpeed);
     RRMotor->setSpeed(RRMotorSpeed);
@@ -900,9 +911,9 @@ void setup()
     MotorShield.begin();
 
     // Start IMU (Inertial Measurement Unit) with scale and range settings, for I2C address 0x69
-    imu.begin(MPU6050_SCALE_2000DPS, MPU6050_RANGE_2G, 0x69);
-    imu.calibrateGyro();  // Calibrate gyroscope. The calibration must be at rest.
-    imu.setThreshold(1);  // Set threshold sensitivty. Default = 3.
+    imu.begin(0x69);
+    imu.setGyroRange(MPU6050_RANGE_250_DEG);
+    imu.setFilterBandwidth(MPU6050_BAND_10_HZ);
 
     // initialize inCorrection. This is used by the line following code
     inCorrection = none;
@@ -1143,7 +1154,86 @@ void loop()
             prevTurn = inTurn;
         }
 
+        /*******************************Using gyro to track turns*****************************
+            The current system for tracking turns works ok once you are in a turn, but detecting when
+            you are starting a real turn and tracking it to where it ends is a challenge because a
+            "gentle" correction in a straight section can look like the beginning of a turn followed
+            by the end of the turn shortly after that correction. The current code defines the end
+            of a straight section with a timer, and if the timer expires too soon before the next turn,
+            this false turn scenario becomes quite likely, and tuning of timers more finicky. By using
+            the gyro, we can directly detect the turns and the ends of the turns and leave the sprint
+            timers to the job of controlling speed, not track section switching. Proposed changes...
 
+            1. Stop using the sprint timer for switching track sections. Instead, use the timers just to
+            control the speed through most of a straight section. We may add another speed for after the
+            timer expires to avoid overruns at the beginning of turns, though biasing the straight section
+            toward the outside of turn might be adequate for everything except sudden changes in direction
+            like doglegs.
+
+            2. Track the turn using the gyro. The gyro detects the rate of the turn in radians per
+            second. Because the turn is taken as a series of corrections, we need a way of smoothing
+            out the choppiness of the corrections. A running average or equivalent should work for this.
+            When the running average drops below a threshold, the turn is finished and we go on the
+            the next section.
+
+            Implementation:
+            Keep turnTrackState.
+                - idle means we are not tracking because we don't need to
+                - waitingForLeftEdge means we expect a right turn, but we are not looking for
+                  a left edge. Instead, we are waiting for the gyro to detect the beginning
+                  of a right turn, so when we are in this state, we look for a sustained rate
+                  of rotation to the right. Rename waitingForLeftEdge to waitingForRightTurn.
+                - waitingForRightEdge means we expect a left turn. Rename to waitingForLeftTurn.
+                  Same deal as above for right turns.
+                - tracking means we are in a turn and waiting for the turn to end.
+            Keep inTurn, which has meaning when turnTrackState == tracking
+                - left means a left turn is in progress
+                - right means a right turn is in progress
+                - none means we are not detecting a turn, usually signaling the end of a turn.
+                - unknown means we are not tracking turns (turnTrackState == idle)
+
+            We need a function for sampling the gyro, probably with a timer to avoid sampling it faster
+            than it creates values. We will be using a low pass filter set to 5 or 10 HZ, so checking it
+            every millisecond probably does not make sense. This function should also do the accumulation,
+            so we need an argument to initialize the accumulator on the first call. We may or may not want
+            to do drift compensation, probably by passing the compensation value to the function.
+            float sampleGyroZ(float accum, float driftComp) returns new accum value, which can then be
+            passed by value the next time around. Threshold test done by caller.
+
+
+        */
+
+        /*
+
+                if (turnTrackState == idle)
+                {
+                    inTurn = unknown;
+                    rotationAccum = 0.0; // accumulator for gyro values
+                }
+                else if (turnTrackState == waitingForRightTurn)
+                {
+                  // read the gyro z axis and add the value to rotationAccum.
+
+                  // if the resulting value is less than the detection threshold, change the state to
+                  // tracking and set inTurn = right.
+
+                }
+                else if (turnTrackState == waitingForLeftTurn)
+                {
+                  // read the gyro z axis and add the value to rotationAccum.
+
+                  // if the resulting value is greater than the detection threshold, change the state to
+                  // tracking and set inTurn = left.
+
+                }
+                if (turnTrackState == tracking)
+                {
+                  // read the gyro z axis and add the valule to rotationAccum.
+
+                  // if rotationAccum increase slows down for two cycles, change the state to idle
+                  // and set inTurn = none;
+                }
+        */
 
         /*******************************Detect Course Segment*********************************
 
@@ -1155,8 +1245,8 @@ void loop()
 
                 Turns are tracked from the first time we detect the outside edge of the road until the time
                 we see a small number or correction events. The turn tracking code will start by looking for
-                the specified correction (e.g. turnTrackState = waitingForLeftEdge) As it tracks, it periodically 
-                sets the global variable inTurn. To detect the end of a turn, we look for inTurn == none, at which 
+                the specified correction (e.g. turnTrackState = waitingForLeftEdge) As it tracks, it periodically
+                sets the global variable inTurn. To detect the end of a turn, we look for inTurn == none, at which
                 point we advance to the next track section. There are places where we will bias our straight runs
                 to the right of left to avoid falsely detecting a curve starting edge. E.G. when we expect a right
                 turn, we might bias to the right to avoid any left edge encounters. This becomes important if there
@@ -1675,6 +1765,7 @@ void loop()
 
             default:
                 break;
+
         }  // *************************End of course section id code****************************
 
 
@@ -1787,8 +1878,8 @@ void loop()
                 firstLineDetected is false
                 pauseReturnDelay is true
                 crossLineState = seekingBlocked
-
         */
+
         if (crossLineState == seekingFirstLine)
         {
             //we are looking for a crossing line. We will check the sensor for a light-dark-light cycle
@@ -1842,6 +1933,7 @@ void loop()
                         // has expired, we will stop the robot and go into standby mode
                         finishLineTimer.Start(finishLineDelay);
                         waitingForFinalStandby = true;
+
                         //
                         // Just to make sure we stop looking for crosslines and avoid finding
                         // this one again on the next time around the loop, we block line seeking
@@ -1862,7 +1954,6 @@ void loop()
                 // second line time window has expired. This means we have failed to find a
                 // second line, close enough to the first one, so there was only one line at
                 // this location and we can start looking for the next one.
-
                 crossLineState = seekingFirstLine;  //start looking for the next line
             }
         }
@@ -1875,8 +1966,8 @@ void loop()
         else
         {
             // if we fall through to here, we have left pause mode, but are still waiting to start
-            // looking for lines again, so we do nothing. This will keep happening until the timer
-            // expires.
+            // looking for lines again, so we do nothing. This will keep happening until the
+            // firstLineBlockTimer expires.
         }
 
         /*
@@ -1981,30 +2072,28 @@ void loop()
                 displacement. This will drift over time due to cumulative rounding error, but we
                 will try it out and see how well it works.
         */
-        /*
-                    if (imuGyroTimer.Test()) // check if timer has reached its limit
-                    {
-                        // Read normalized values
-                        Vector norm = imu.readNormalizeGyro(); //vector to receive 3D gyro readings.
 
-                        // Calculate Pitch, Roll and Yaw (rough incremental rate integration)
-                        //pitch = pitch + norm.YAxis * timeStep;
-                        //roll = roll + norm.XAxis * timeStep;
-                        yaw = yaw + norm.ZAxis * timeStep;
+        // sample the gyro every imuTimeStep milliseconds
+        //
+        if (imuGyroTimer.Test()) // check if timer has reached its limit
+        {
+            //mpu6050 sensor events. We only care about the gyro, but the library only supports reading all of them.
+            sensors_event_t accelerationsXYZ,  rotationRatesXYZ,  temperature;
+            imu.getEvent  (&accelerationsXYZ, &rotationRatesXYZ, &temperature); // get the acceleration, rotation and temperature values
+            static float cumulative = 0;
 
-                        // Output raw
-                        //Serial.print(" Pitch = ");
-                        //Serial.print(pitch);
-                        //Serial.print(" Roll = ");
-                        //Serial.print(roll);
-                        Serial.print(" Yaw = ");
-                        Serial.println(yaw);
+            float zRotationRate = rotationRatesXYZ.gyro.z - imuGyroZDrift;
+            cumulative += zRotationRate;
 
-                        // Wait to full timeStep period
-                        //delay((timeStep * 1000) - (millis() - timer));
-                        imuGyroTimer.Start(imuTimeStep); // start timer with time step delay
-                    }
-        */
+            Serial.print(", Z: ");
+            Serial.print(zRotationRate);
+            Serial.print(" rad/s ");
+            Serial.print("cumulative ");
+            Serial.println(cumulative);
+
+            imuGyroTimer.Start(imuTimeStep); // start timer with time step delay
+        }
+
         /*
                 Test seven segment display. DisplayCount is called every cycle, but the
                 number to display is changed every second or so. Note DisplayCount has its
