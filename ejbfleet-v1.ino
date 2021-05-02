@@ -105,8 +105,12 @@
     with compensation for a small amount of offset when there is no rotation. This works
     well enough. Started designing a better method for detecting and tracking turns using
     the gyro and an improved method for tracking course sections. Not a huge change, but
-    should be much more reliable. The design is detailed in a comment block after the 
+    should be much more reliable. The design is detailed in a comment block after the
     current turn tracking code.
+
+    5/2/2021 Added and tested code in loop() to take a snapshot of zRotation and xAcceleration
+    every set amount of time. Started adding code to use it for turn tracking. Checking in to
+    snapshot this.
 
 */
 #define ANALOGSENSING  //using analog outputs of line sensors and software thresholds.
@@ -331,6 +335,11 @@ const uint8_t imuI2Caddress = 0x69;
 // monitor as they are read. This should be good enough.
 const double imuGyroZDrift = -0.00143;
 
+// event target veriables for the imu. These will be used when we read the values from
+// the imu in main loop.
+sensors_event_t accelerationsXYZ,  rotationRatesXYZ,  temperature;
+
+
 // LED port definitions
 const int ledPortYellow = 25;  // Standby LED
 const int ledPortRed = 27;     // Stop flasher LED
@@ -523,6 +532,10 @@ int turnState;
 int turnDirection;
 int turnTrackState;
 int inTurn;
+
+// Robot rotation rate around Z axis and accleration in the X axis.
+float zRotationRate;
+float xAcceleration;
 
 boolean finishingCrosswalk; // to let course section code know crosswalk pause is finished
 
@@ -1048,6 +1061,34 @@ void loop()
         digitalWrite(ledPortWhite, ledOff);
     }
 
+    /*
+        Sample the Z axis gyro rotation rate and the X axis acceleration.
+    */
+
+    /*
+        Sample the z-axis gyro, putting the value into the global variable zRotation. After the first read,
+        we actually read the gyro sensor every imuTimeStep milliseconds. Between these reads, we keep the
+        previous value. We also sample the X axis acceleration here, so we can use it to detect the ramps.
+    */
+    if (imuGyroTimer.Test()) // check if timer has reached its limit. The first time through, this test will succeed.
+    {
+        //mpu6050 sensor events. We only care about the gyro Z and acceration X, but the library only supports
+        //reading all of them.
+        imu.getEvent  (&accelerationsXYZ, &rotationRatesXYZ, &temperature);
+        zRotationRate = rotationRatesXYZ.gyro.z - imuGyroZDrift;
+        xAcceleration = accelerationsXYZ.acceleration.x;
+
+        // We do not read the IMU values in every loop cycle, because it is not necessary for our
+        // application. Set the timer for tne next read.
+        imuGyroTimer.Start(imuTimeStep);
+    }
+    /*
+    Serial.print("Z rotation: ");
+    Serial.print(zRotationRate);
+    Serial.print ("X accel: ");
+    Serial.println(xAcceleration);
+    */
+    
     /*                      _                   _   _   _    _  _   _   _
                            |_) | | |\ |   |\/| / \ | \ |_   /  / \ | \ |_
                            | \ |_| | \|   |  | \_/ |_/ |_   \_ \_/ |_/ |_
@@ -1192,13 +1233,9 @@ void loop()
                 - none means we are not detecting a turn, usually signaling the end of a turn.
                 - unknown means we are not tracking turns (turnTrackState == idle)
 
-            We need a function for sampling the gyro, probably with a timer to avoid sampling it faster
-            than it creates values. We will be using a low pass filter set to 5 or 10 HZ, so checking it
-            every millisecond probably does not make sense. This function should also do the accumulation,
-            so we need an argument to initialize the accumulator on the first call. We may or may not want
-            to do drift compensation, probably by passing the compensation value to the function.
-            float sampleGyroZ(float accum, float driftComp) returns new accum value, which can then be
-            passed by value the next time around. Threshold test done by caller.
+            We sample the gyro and accelerometer at the beginning of loop(), updating the global
+            variabes zRotationRate and xAcceleration. We can directly use zRotationRate to determine
+            the current dynamics of the robot.
 
 
         */
@@ -1221,7 +1258,7 @@ void loop()
                 else if (turnTrackState == waitingForLeftTurn)
                 {
                   // read the gyro z axis and add the value to rotationAccum.
-
+            rotationAccum = sampleGyroZ()
                   // if the resulting value is greater than the detection threshold, change the state to
                   // tracking and set inTurn = left.
 
@@ -2075,6 +2112,7 @@ void loop()
 
         // sample the gyro every imuTimeStep milliseconds
         //
+/*
         if (imuGyroTimer.Test()) // check if timer has reached its limit
         {
             //mpu6050 sensor events. We only care about the gyro, but the library only supports reading all of them.
@@ -2093,7 +2131,7 @@ void loop()
 
             imuGyroTimer.Start(imuTimeStep); // start timer with time step delay
         }
-
+*/
         /*
                 Test seven segment display. DisplayCount is called every cycle, but the
                 number to display is changed every second or so. Note DisplayCount has its
