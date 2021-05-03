@@ -108,9 +108,14 @@
     should be much more reliable. The design is detailed in a comment block after the
     current turn tracking code.
 
-    5/2/2021 Added and tested code in loop() to take a snapshot of zRotation and xAcceleration
+    5/2/2021 1:00 AM Added and tested code in loop() to take a snapshot of zRotation and xAcceleration
     every set amount of time. Started adding code to use it for turn tracking. Checking in to
     snapshot this.
+
+    5/2/2021 10:30 PM Finished new turn tracking code based on zRotation discussed above.
+    It compiles, but is not tested. Next: add some simple test code to adjust the thresholds
+    for turn starts and ends, debug, then modify the track section code to utilize the new
+    approach, including adding post sprint speeds for straight sections.
 
 */
 #define ANALOGSENSING  //using analog outputs of line sensors and software thresholds.
@@ -178,14 +183,16 @@ const int lightsOffThreshold = 9;
 // so we switch back and forth between them every displayRefreshPeriod milliseconds
 const int displayRefreshPeriod = 13;
 
-// The turn time bucket is the period of time we sample turn data before making a
+// The turn time sample interval is the period of time we sample turn data before making a
 // decision on whether to advance the section counter. This should be happening several
 // times a second. The longer this period, the better smoothing we will have to avoid
 // local minima. Too long will make the section boundaries too inaccurate.
-const int turnTimeBucket = 500;
-// turn threshold is the number of correction events we count per time bucket to define
-// being in a turn. This number will go up with the size of the time bucket.
-const int turnThreshold = 30;
+const int turnSampleInterval = 100;
+
+// turn thresholds are the total value of the sum of rotation values we count per time slot to
+// define entering and exiting a turn. This number will go up with the size of the time interval.
+const int turnStartThreshold = 30;
+const int turnEndThreshold = 20;
 
 int courseSection; //state variable stores which section we are in. Initialized in setup()
 //
@@ -438,7 +445,7 @@ Timer finishLineTimer = Timer();
 // IMU gyro sample timer
 Timer imuGyroTimer = Timer();
 
-// Turn timer. This is for creating time buckets for sampling correction data
+// Turn timer. This is for creating time slots for sampling rotation data
 // during turns.
 Timer turnTimer = Timer();
 
@@ -521,8 +528,8 @@ const int right = 1;
 const int left = -1;
 const int unknown = 2;
 const int idle = 5;
-const int waitingForLeftEdge = 6;
-const int waitingForRightEdge = 7;
+const int waitingForRightTurn = 6;
+const int waitingForLeftTurn = 7;
 const int tracking = 8;
 
 
@@ -536,6 +543,9 @@ int inTurn;
 // Robot rotation rate around Z axis and accleration in the X axis.
 float zRotationRate;
 float xAcceleration;
+
+// variable to accumulate rotation rate for averaging.
+float rotationAccum;
 
 boolean finishingCrosswalk; // to let course section code know crosswalk pause is finished
 
@@ -1072,8 +1082,8 @@ void loop()
     */
     if (imuGyroTimer.Test()) // check if timer has reached its limit. The first time through, this test will succeed.
     {
-        //mpu6050 sensor events. We only care about the gyro Z and acceration X, but the library only supports
-        //reading all of them.
+        //mpu6050 sensor events.
+
         imu.getEvent  (&accelerationsXYZ, &rotationRatesXYZ, &temperature);
         zRotationRate = rotationRatesXYZ.gyro.z - imuGyroZDrift;
         xAcceleration = accelerationsXYZ.acceleration.x;
@@ -1083,12 +1093,12 @@ void loop()
         imuGyroTimer.Start(imuTimeStep);
     }
     /*
-    Serial.print("Z rotation: ");
-    Serial.print(zRotationRate);
-    Serial.print ("X accel: ");
-    Serial.println(xAcceleration);
+        Serial.print("Z rotation: ");
+        Serial.print(zRotationRate);
+        Serial.print ("X accel: ");
+        Serial.println(xAcceleration);
     */
-    
+
     /*                      _                   _   _   _    _  _   _   _
                            |_) | | |\ |   |\/| / \ | \ |_   /  / \ | \ |_
                            | \ |_| | \|   |  | \_/ |_/ |_   \_ \_/ |_/ |_
@@ -1098,17 +1108,20 @@ void loop()
         runLed.Update();  // Update Run flasher.
         DisplayCount(courseSection);
 
-        /*******************************Turn Tracking*****************************************
+        
+                                                                                              // old turn tracking code TO BE DELETED
+            
+            /*******************************Turn Tracking*****************************************
             This code is used to track the status of a turn. It is driven by the state variable
 
             turnTrackState, which will have one of the following values...
 
              idle...we are not actively tracking a turn
 
-             waitingForLeftEdge...we are expecting to start a right turn, and will track when we
+             waitingForRightTurn...we are expecting to start a right turn, and will track when we
                                 see the left edge.
 
-             waitingForRightEdge...we are expecting to start a left turn, and will track wne we
+             waitingForLeftTurn...we are expecting to start a left turn, and will track wne we
                                  see the right edge.
 
              tracking...the timer is running, and we are accumulating sensor events
@@ -1117,7 +1130,7 @@ void loop()
             mechanism is not being used.
 
             If a track section contains a turn, and we need to know when
-            the turn ends, the section detection code will set waitingForLeftEdge or waitingForRightEdge,
+            the turn ends, the section detection code will set waitingForRightTurn or waitingForLeftTurn,
             and this code checks for inCorrecton = left or right on each iteration. When it is found,
             we know the turn is starting, and we set turnTrackState to tracking and start the turnTimer.
 
@@ -1128,11 +1141,13 @@ void loop()
 
             When the track section code is done with this mechanism, it sets turnTrackState to idle.
         */
+
+        /*
         if (turnTrackState == idle)
         {
             inTurn = unknown;
         }
-        else if (turnTrackState == waitingForLeftEdge)
+        else if (turnTrackState == waitingForRightTurn)
         {
             if (inCorrection == left)
             {
@@ -1140,7 +1155,7 @@ void loop()
                 turnTimer.Start(turnTimeBucket);
             }
         }
-        else if (turnTrackState == waitingForRightEdge)
+        else if (turnTrackState == waitingForLeftTurn)
         {
             if (inCorrection == right)
             {
@@ -1194,19 +1209,16 @@ void loop()
             Serial.println(inTurn);
             prevTurn = inTurn;
         }
+        */
+                                                                                                   // end of old turn tracking code TO BE DELETED
 
         /*******************************Using gyro to track turns*****************************
-            The current system for tracking turns works ok once you are in a turn, but detecting when
-            you are starting a real turn and tracking it to where it ends is a challenge because a
-            "gentle" correction in a straight section can look like the beginning of a turn followed
-            by the end of the turn shortly after that correction. The current code defines the end
-            of a straight section with a timer, and if the timer expires too soon before the next turn,
-            this false turn scenario becomes quite likely, and tuning of timers more finicky. By using
+            We want to know when turns begin and when they end, and we know when to expect each turn. By using
             the gyro, we can directly detect the turns and the ends of the turns and leave the sprint
-            timers to the job of controlling speed, not track section switching. Proposed changes...
+            timers to the job of controlling speed, not track section switching.
 
-            1. Stop using the sprint timer for switching track sections. Instead, use the timers just to
-            control the speed through most of a straight section. We may add another speed for after the
+            1. Don' use the sprint timer for switching track sections. Instead, use the timers just to
+            control the speed through most of a straight section. Add another speed for after the
             timer expires to avoid overruns at the beginning of turns, though biasing the straight section
             toward the outside of turn might be adequate for everything except sudden changes in direction
             like doglegs.
@@ -1214,20 +1226,21 @@ void loop()
             2. Track the turn using the gyro. The gyro detects the rate of the turn in radians per
             second. Because the turn is taken as a series of corrections, we need a way of smoothing
             out the choppiness of the corrections. A running average or equivalent should work for this.
-            When the running average drops below a threshold, the turn is finished and we go on the
+            We do this by just accumulating the turn rates for a fixed amount of time and then test
+            the sum rather than doing a floating point divide to get the real average.
+            When the sum drops below a threshold, the turn is finished and we go on the
             the next section.
 
             Implementation:
-            Keep turnTrackState.
+            turnTrackState tells us where we are in detection and tracking a turn...
                 - idle means we are not tracking because we don't need to
-                - waitingForLeftEdge means we expect a right turn, but we are not looking for
+                - waitingForRightTurn means we expect a right turn, but we are not looking for
                   a left edge. Instead, we are waiting for the gyro to detect the beginning
                   of a right turn, so when we are in this state, we look for a sustained rate
-                  of rotation to the right. Rename waitingForLeftEdge to waitingForRightTurn.
-                - waitingForRightEdge means we expect a left turn. Rename to waitingForLeftTurn.
-                  Same deal as above for right turns.
+                  of rotation to the right.
+                - waitingForLeftTurn means we expect a left turn. Same deal as above for right turns.
                 - tracking means we are in a turn and waiting for the turn to end.
-            Keep inTurn, which has meaning when turnTrackState == tracking
+            inTurn which has meaning when turnTrackState == tracking
                 - left means a left turn is in progress
                 - right means a right turn is in progress
                 - none means we are not detecting a turn, usually signaling the end of a turn.
@@ -1235,42 +1248,99 @@ void loop()
 
             We sample the gyro and accelerometer at the beginning of loop(), updating the global
             variabes zRotationRate and xAcceleration. We can directly use zRotationRate to determine
-            the current dynamics of the robot.
+            the current dynamics of the robot. xAcceleration can be used to detect the ramps.
 
+            To determine if we are in a turn, we want a kind of average of the zRotationRate over time,
+            so we don't get false positives from short term events, and we want to track the beginning
+            and end of the turn. We know when we are looking for the beginning of the turn because
+            turnTrackState is either waitingForLeftTurn or waitingForRightTurn, and we know that a
+            turn in that direction is next on the track, so it is a matter of when the turn starts,
+            not whether there is a turn. The smooth out the measurements, we add up the rotation rates
+            over a period of time, on the order one or two tenths of a second, then we test the sum
+            against a threshold. If the turn started near the end of such a time slice, this sum may be
+            too small, but will will get it in the next time slice and change our tracking state to "tracking"
+            and restart the timer.
 
+            During turnTrackState == tracking, we are looking for the end of the turn, and we use the same
+            summing approach, this time looking for a |sum| below a threshold. Again, if the turn ends near
+            the end of a time slot, we will catch in in the next one. then set turnTrackState back to idle.
         */
 
-        /*
-
-                if (turnTrackState == idle)
+        if (turnTrackState == idle)
+        {
+            inTurn = unknown;
+            rotationAccum = 0.0; // accumulator for gyro values
+            // We start the timer every time here so that when turn detection starts, this time
+            // will be in sync.
+            turnTimer.Start(turnSampleInterval);
+        }
+        else if (turnTrackState == waitingForRightTurn)
+        {
+            if (turnTimer.Test())
+            {
+                // timer has expired. Test the accumulated turn events to see if we have detected
+                // the existence of a right turn. If so, change turnTrackState to tracking.
+                if (rotationAccum < -turnStartThreshold) //right turn is negative
                 {
-                    inTurn = unknown;
-                    rotationAccum = 0.0; // accumulator for gyro values
+                    // turn detected. Switch to tracking state
+                    turnTrackState = tracking;
+                    inTurn = right;
                 }
-                else if (turnTrackState == waitingForRightTurn)
+                // whether or not we are changing state, we want to start the timer
+                // again and zero the accumulator
+                turnTimer.Start(turnSampleInterval);
+                rotationAccum = 0.0;
+            }
+            else
+            {
+                rotationAccum += zRotationRate;
+            }
+        }
+        else if (turnTrackState == waitingForLeftTurn)
+        {
+            if (turnTimer.Test())
+            {
+                // timer has expired. Test the accumulated turn events to see if we have detected
+                // the existence of a left turn. If so, change turnTrackState to tracking.
+                if (rotationAccum > turnStartThreshold) //left rotation is positive
                 {
-                  // read the gyro z axis and add the value to rotationAccum.
-
-                  // if the resulting value is less than the detection threshold, change the state to
-                  // tracking and set inTurn = right.
-
+                    // turn detected. Switch to tracking state
+                    turnTrackState = tracking;
+                    inTurn = left;
                 }
-                else if (turnTrackState == waitingForLeftTurn)
+                // whether or not we are changing state, we want to start the timer
+                // again and zero the accumulator
+                turnTimer.Start(turnSampleInterval);
+                rotationAccum = 0.0;
+            }
+            else
+            {
+                rotationAccum += zRotationRate;
+            }
+        }
+        if (turnTrackState == tracking)
+        {
+            if (turnTimer.Test())
+            {
+                // timer has expired. Test the accumulated turn events to see if we have detected
+                // the lack of a turn. If so, change turnTrackState to idle.
+                if (abs(rotationAccum) < turnEndThreshold) // absolute value of accumulated rotation below the
                 {
-                  // read the gyro z axis and add the value to rotationAccum.
-            rotationAccum = sampleGyroZ()
-                  // if the resulting value is greater than the detection threshold, change the state to
-                  // tracking and set inTurn = left.
-
+                    // Absolute value of accumulated rotatoin is below the "not in turn" threshold.
+                    // Turn is finished.
+                    turnTrackState = idle;
+                    inTurn = none;
                 }
-                if (turnTrackState == tracking)
-                {
-                  // read the gyro z axis and add the valule to rotationAccum.
-
-                  // if rotationAccum increase slows down for two cycles, change the state to idle
-                  // and set inTurn = none;
-                }
-        */
+                // whether or not we are changing state, we want to start the timer
+                // again and zero the accumulator
+                turnTimer.Start(turnSampleInterval);
+                rotationAccum = 0.0;
+            }
+            else
+            {
+                rotationAccum += zRotationRate;
+            }
+        }
 
         /*******************************Detect Course Segment*********************************
 
@@ -1282,7 +1352,7 @@ void loop()
 
                 Turns are tracked from the first time we detect the outside edge of the road until the time
                 we see a small number or correction events. The turn tracking code will start by looking for
-                the specified correction (e.g. turnTrackState = waitingForLeftEdge) As it tracks, it periodically
+                the specified correction (e.g. turnTrackState = waitingForRightTurn) As it tracks, it periodically
                 sets the global variable inTurn. To detect the end of a turn, we look for inTurn == none, at which
                 point we advance to the next track section. There are places where we will bias our straight runs
                 to the right of left to avoid falsely detecting a curve starting edge. E.G. when we expect a right
@@ -1318,7 +1388,7 @@ void loop()
                 {
                     courseSection = 12;
                     // start turn tracking.
-                    turnTrackState = waitingForLeftEdge;
+                    turnTrackState = waitingForRightTurn;
                     leftRightBias = 0;
                 }
                 break;
@@ -1354,7 +1424,7 @@ void loop()
                 {
                     courseSection = 14;
                     // start turn tracking.
-                    turnTrackState = waitingForLeftEdge;
+                    turnTrackState = waitingForRightTurn;
                     leftRightBias = 0;
 
                 }
@@ -1372,7 +1442,7 @@ void loop()
                 {
                     courseSection = 15;
                     // start turn tracking.
-                    turnTrackState = waitingForRightEdge;
+                    turnTrackState = waitingForLeftTurn;
                 }
                 break;
 
@@ -1388,7 +1458,7 @@ void loop()
                 {
                     courseSection = 21;
                     // start turn tracking.
-                    //turnTrackState = waitingForLeftEdge;
+                    //turnTrackState = waitingForRightTurn;
                 }
                 break;
 
@@ -1421,7 +1491,7 @@ void loop()
                 {
                     courseSection = 31;
                     // start turn tracking.
-                    turnTrackState = waitingForLeftEdge;
+                    turnTrackState = waitingForRightTurn;
                     leftRightBias = 0;
 
                 }
@@ -1457,7 +1527,7 @@ void loop()
                 {
                     courseSection = 41;
                     // start turn tracking.
-                    turnTrackState = waitingForLeftEdge;
+                    turnTrackState = waitingForRightTurn;
                     leftRightBias = 0;
                 }
                 break;
@@ -1490,7 +1560,7 @@ void loop()
                 {
                     courseSection = 43;
                     // start turn tracking.
-                    turnTrackState = waitingForLeftEdge;
+                    turnTrackState = waitingForRightTurn;
                     leftRightBias = 0;
                 }
                 break;
@@ -1543,7 +1613,7 @@ void loop()
                 {
                     courseSection = 52;
                     // start turn tracking.
-                    turnTrackState = waitingForLeftEdge;
+                    turnTrackState = waitingForRightTurn;
                     leftRightBias = 0;
                 }
                 break;
@@ -1592,7 +1662,7 @@ void loop()
                 {
                     courseSection = 62;
                     // start turn tracking.
-                    turnTrackState = waitingForRightEdge;
+                    turnTrackState = waitingForLeftTurn;
                     leftRightBias = 0;
                 }
                 break;
@@ -1624,7 +1694,7 @@ void loop()
                 {
                     courseSection = 64;
                     // start turn tracking.
-                    turnTrackState = waitingForRightEdge;
+                    turnTrackState = waitingForLeftTurn;
                     leftRightBias = 0;
                 }
                 break;
@@ -1657,7 +1727,7 @@ void loop()
                 {
                     courseSection = 71;
                     // start turn tracking.
-                    turnTrackState = waitingForLeftEdge;
+                    turnTrackState = waitingForRightTurn;
                     leftRightBias = 0;
                 }
                 break;
@@ -1690,7 +1760,7 @@ void loop()
                 {
                     courseSection = 73;
                     // start turn tracking.
-                    turnTrackState = waitingForLeftEdge;
+                    turnTrackState = waitingForRightTurn;
                     leftRightBias = 0;
                 }
                 break;
@@ -1724,7 +1794,7 @@ void loop()
                 {
                     courseSection = 81;
                     // start turn tracking.
-                    turnTrackState = waitingForLeftEdge;
+                    turnTrackState = waitingForRightTurn;
                     leftRightBias = 0;
                 }
                 break;
@@ -1756,7 +1826,7 @@ void loop()
                 {
                     courseSection = 83;
                     // start turn tracking.
-                    turnTrackState = waitingForLeftEdge;
+                    turnTrackState = waitingForRightTurn;
                     leftRightBias = 0;
                 }
                 break;
@@ -2112,26 +2182,26 @@ void loop()
 
         // sample the gyro every imuTimeStep milliseconds
         //
-/*
-        if (imuGyroTimer.Test()) // check if timer has reached its limit
-        {
-            //mpu6050 sensor events. We only care about the gyro, but the library only supports reading all of them.
-            sensors_event_t accelerationsXYZ,  rotationRatesXYZ,  temperature;
-            imu.getEvent  (&accelerationsXYZ, &rotationRatesXYZ, &temperature); // get the acceleration, rotation and temperature values
-            static float cumulative = 0;
+        /*
+                if (imuGyroTimer.Test()) // check if timer has reached its limit
+                {
+                    //mpu6050 sensor events. We only care about the gyro, but the library only supports reading all of them.
+                    sensors_event_t accelerationsXYZ,  rotationRatesXYZ,  temperature;
+                    imu.getEvent  (&accelerationsXYZ, &rotationRatesXYZ, &temperature); // get the acceleration, rotation and temperature values
+                    static float cumulative = 0;
 
-            float zRotationRate = rotationRatesXYZ.gyro.z - imuGyroZDrift;
-            cumulative += zRotationRate;
+                    float zRotationRate = rotationRatesXYZ.gyro.z - imuGyroZDrift;
+                    cumulative += zRotationRate;
 
-            Serial.print(", Z: ");
-            Serial.print(zRotationRate);
-            Serial.print(" rad/s ");
-            Serial.print("cumulative ");
-            Serial.println(cumulative);
+                    Serial.print(", Z: ");
+                    Serial.print(zRotationRate);
+                    Serial.print(" rad/s ");
+                    Serial.print("cumulative ");
+                    Serial.println(cumulative);
 
-            imuGyroTimer.Start(imuTimeStep); // start timer with time step delay
-        }
-*/
+                    imuGyroTimer.Start(imuTimeStep); // start timer with time step delay
+                }
+        */
         /*
                 Test seven segment display. DisplayCount is called every cycle, but the
                 number to display is changed every second or so. Note DisplayCount has its
