@@ -117,6 +117,10 @@
     for turn starts and ends, debug, then modify the track section code to utilize the new
     approach, including adding post sprint speeds for straight sections.
 
+    5/3/2021 Modified new turn tracking code to track from right turns to left turns and left turns
+    right turns. Added functions to handle most straight and turn sections. Started modifying section
+    code to use this new stuff. No compile today because more stuff has to be updated.
+
 */
 #define ANALOGSENSING  //using analog outputs of line sensors and software thresholds.
 
@@ -532,13 +536,13 @@ const int waitingForRightTurn = 6;
 const int waitingForLeftTurn = 7;
 const int tracking = 8;
 
-
 int inCorrection = none;
 int previousCorrection;
 int turnState;
 int turnDirection;
 int turnTrackState;
 int inTurn;
+int trackTurnTo;
 
 // Robot rotation rate around Z axis and accleration in the X axis.
 float zRotationRate;
@@ -565,6 +569,84 @@ unsigned long imuTimeStep = 10;  //timeStep for sample timer in milliseconds
     /  \ | ||  | | \_/  |_ /  \|\ |/   | |/  \|\ |(_
     \__/ | ||__| |  |   |  \__/| \|\__ | |\__/| \|__)
 */
+
+/*
+    this function sets up a timed sprint followed by a (usually) slower speed leading up the the next
+    course section, which is always a turn. It is mostly to make the course section sequencing code
+    more compact, and only works for straight track sections that end with a turn. The sequence is...
+
+    start the curve tracking code looking for a turn in the direction of the next curve.
+
+    The assumption is that the sprint timer has already been started during the track section transition.
+    test the sprint timer. If it has not expired, run at sprint speed, otherwise run at post
+    sprint speed.
+*/
+ProcessStraightSection
+(
+    int sprintFastSideSpeed,
+    int sprintSlowSideSpeed,
+    int postSprintFastSideSpeed,
+    int postSprintSlowSideSpeed,
+    int nextSection,
+    int nextSectionTurn
+)
+{
+    // Since we are in a straight section, there will only be small corrections leading up to
+    // the turn in the next section, so we start looking for the turn here.
+    if (nextSectionTurn == right)
+    {
+        turnTrackState = waitingForRightTurn;
+    }
+    else
+    {
+        turnTrackState = waitingForLeftTurn;
+    }
+
+    // run at sprint speed during the sprint time. This should end before the next track section just
+    // to avoid going too fast to start the turn.
+    if (sprintTimer.Test())
+    {
+        fastSideSpeed = postSprintFastSideSpeed;
+        slowSideSpeed = postSprintSlowSideSpeed;
+    }
+    else
+    {
+        fastSideSpeed = sprintFastSideSpeed;
+        slowSideSpeed = sprintSlowSideSpeed;
+    }
+    if (inTurn == nextSectionTurn)
+    {
+        courseSection = nextSection;
+    }
+}
+/*
+    This function processes a track section that is a turn. It will be called after a waitingForRightTurn
+    or waitingForLeftTurn has transitioned to tracking a turn, which is the event that put us into this
+    section.
+*/
+ProcessTurnSection
+(
+    int turnFastSideSpeed,
+    int turnSlowSideSpeed,
+    int nextSection,
+    int nextSectionSprintTime,
+    int nextSectionLeftRightBias
+)
+{
+    // set speeds for the turn
+    fastSideSpeed = turnFastSideSpeed;
+    slowSideSpeed = turnSlowSideSpeed;
+
+    //test if the turn is finished. If so, set up for the next track section (straight)
+    if (inTurn == none)
+    {
+        courseSection = nextSection;
+        // end turn tracking
+        turnTrackState = idle;
+        sprintTimer.Start(nextSectionSprintTime);
+        leftRightBias = nextSectionLeftRightBias;
+    }
+}
 
 
 /*
@@ -950,6 +1032,7 @@ void setup()
     turnTrackState = idle;
     finishingCrosswalk = false;
     leftRightBias = 0;
+    trackTurnTo = none;
 
     //
     // Read the button. If the button is pressed, set the mode to modeTest.
@@ -1108,109 +1191,7 @@ void loop()
         runLed.Update();  // Update Run flasher.
         DisplayCount(courseSection);
 
-        
-                                                                                              // old turn tracking code TO BE DELETED
-            
-            /*******************************Turn Tracking*****************************************
-            This code is used to track the status of a turn. It is driven by the state variable
 
-            turnTrackState, which will have one of the following values...
-
-             idle...we are not actively tracking a turn
-
-             waitingForRightTurn...we are expecting to start a right turn, and will track when we
-                                see the left edge.
-
-             waitingForLeftTurn...we are expecting to start a left turn, and will track wne we
-                                 see the right edge.
-
-             tracking...the timer is running, and we are accumulating sensor events
-
-            The sequence works like this...turnTrackState is initialized to idle, which means this
-            mechanism is not being used.
-
-            If a track section contains a turn, and we need to know when
-            the turn ends, the section detection code will set waitingForRightTurn or waitingForLeftTurn,
-            and this code checks for inCorrecton = left or right on each iteration. When it is found,
-            we know the turn is starting, and we set turnTrackState to tracking and start the turnTimer.
-
-            While in this state, we count inCorrection values (left and right) and check the turn timer.
-            When the turn timer expires, we compare the inCorrection values to the threshold to determine
-            if we are still in a turn, and set inTurn = left, right or none. Then we clear the
-            inCorrection counts and restart the turnTimer.
-
-            When the track section code is done with this mechanism, it sets turnTrackState to idle.
-        */
-
-        /*
-        if (turnTrackState == idle)
-        {
-            inTurn = unknown;
-        }
-        else if (turnTrackState == waitingForRightTurn)
-        {
-            if (inCorrection == left)
-            {
-                turnTrackState = tracking;
-                turnTimer.Start(turnTimeBucket);
-            }
-        }
-        else if (turnTrackState == waitingForLeftTurn)
-        {
-            if (inCorrection == right)
-            {
-                turnTrackState = tracking;
-                turnTimer.Start(turnTimeBucket);
-            }
-        }
-        // no else here because we want to respond immediatly to the state change to tracking.
-        if (turnTrackState == tracking)
-        {
-            // Accumulate correction data from the line follower sensors
-            if (inCorrection == right)
-            {
-                rightCorrectionCount++;
-            }
-            else if (inCorrection == left)
-            {
-                leftCorrectionCount++;
-            }
-
-            if (turnTimer.Test())
-            {
-                // accumulation time is expired. Test the counts and set inTurn to right, left or none
-                if (rightCorrectionCount > turnThreshold)
-                {
-                    // we are in a right turn.
-                    inTurn = left;
-
-                }
-                else if (leftCorrectionCount > turnThreshold)
-                {
-                    // we are in a left turn.
-                    inTurn = right;
-                }
-                else
-                {
-                    // we are not in a turn. This is either because a turn has ended, or because
-                    // we are continuing a straight section.
-                    inTurn = none;
-                }
-                // restart the timer and clear the counts
-                turnTimer.Start(turnTimeBucket);
-                leftCorrectionCount = 0;
-                rightCorrectionCount = 0;
-            }
-        }
-
-        static int prevTurn = unknown;
-        if (prevTurn != inTurn)
-        {
-            Serial.println(inTurn);
-            prevTurn = inTurn;
-        }
-        */
-                                                                                                   // end of old turn tracking code TO BE DELETED
 
         /*******************************Using gyro to track turns*****************************
             We want to know when turns begin and when they end, and we know when to expect each turn. By using
@@ -1319,17 +1300,51 @@ void loop()
             }
         }
         if (turnTrackState == tracking)
+        // When we are tracking a turn, we have already started the turn and we are going to track it until it ends,
+        // either by becoming a turn in the opposite direction, or no turn. We use the variable trackTurnTo to specify
+        // what end state we want to use. The default value if trackTurnTo == none, because most of our turns end in
+        // a straight section. In any of these cases, we stop the tracking when the end case is detected, so if we are
+        // looking for a left to right transition or a right to left transition, we need to restart the tracking
+        // sequence with turnTrackState = waitingForRightTurn or waitingForLeftTurn even though we will already be in that
+        // turn.
         {
             if (turnTimer.Test())
             {
                 // timer has expired. Test the accumulated turn events to see if we have detected
-                // the lack of a turn. If so, change turnTrackState to idle.
-                if (abs(rotationAccum) < turnEndThreshold) // absolute value of accumulated rotation below the
+                // the specified trackTurnTo target value. If so, change turnTrackState to idle.
+                if (trackTurnTo == none)
                 {
-                    // Absolute value of accumulated rotatoin is below the "not in turn" threshold.
-                    // Turn is finished.
-                    turnTrackState = idle;
-                    inTurn = none;
+                    if (abs(rotationAccum) < turnEndThreshold) // absolute value of accumulated rotation below the
+                    {
+                        // Absolute value of accumulated rotation is below the "not in turn" threshold.
+                        // Turn is finished.
+                        turnTrackState = idle;
+                        inTurn = none;
+                    }
+                }
+                else if (trackTurnTo == left)
+                {
+                    if (rotationAccum > turnStartThreshold) //left rotation is positive
+                    {
+                        // accumulated rotation is > the turn start threshold, so we are now in a left turn
+                        // which is what we were seeking. This will happen when we are tracking from a right
+                        // turn directly into a left turn.
+                        turnTrackState = idle;
+                        inTurn = left;
+                        trackTurnTo = none; // resetting to the default
+                    }
+                }
+                else //trackTurnTo == right by default
+                {
+                    if (rotationAccum < -turnStartThreshold)
+                    {
+                        // right turn rotation is negative, so we tested against -threshold. The test is true,
+                        // so we are in a right turn. This will happen when we are tracking from a left turn
+                        // directly into a right turn.
+                        turnTrackState = idle;
+                        inTurn = right;
+                        trackTurnTo = none; // resetting to the default
+                    }
                 }
                 // whether or not we are changing state, we want to start the timer
                 // again and zero the accumulator
@@ -1375,126 +1390,98 @@ void loop()
                 leftRightBias = sec11LeftRightBias;
 
             case 11:
-                /*
-                    ***** Starting line to first turn. End after sprint timer.
-
-                    this section starts before the starting line and runs to the first turn (right). It ends after the
-                    sprint timer expires
-                */
-                fastSideSpeed = sec11FastSideSpeed;
-                slowSideSpeed = sec11SlowSideSpeed;
-
-                if (sprintTimer.Test())
-                {
-                    courseSection = 12;
-                    // start turn tracking.
-                    turnTrackState = waitingForRightTurn;
-                    leftRightBias = 0;
-                }
+                ProcessStraightSection  //first straight section. Sprint to just before the first turn.
+                (
+                    sec11FastSideSpeed1,
+                    sec11SlowSideSpeed1,
+                    sec11FastSideSpeed2,
+                    sec11SlowSideSpeed2,
+                    12,
+                    right
+                );
                 break;
 
             case 12:
-
-                /*
-                    ***** First right turn. Section ends when the turn ends.
-                */
-
-                // set speeds for the turn
-                fastSideSpeed = sec12FastSideSpeed;
-                slowSideSpeed = sec12SlowSideSpeed;
-
-                if (inTurn == none)
-                {
-                    courseSection = 13;
-                    // end turn tracking
-                    turnTrackState = idle;
-                    sprintTimer.Start(sec13SprintTime);
-                    leftRightBias = sec13LeftRightBias;
-                }
+                ProcessTurnSection  //first right turn. Section endss when the turn ends.
+                (
+                    sec12FastSideSpeed,
+                    sec12SlowWideSpeed,
+                    13,
+                    sec13SprintTime,
+                    sec13LeftRightBias
+                );
                 break;
 
             case 13:
-                /*
-                    ***** Straight section to second turn (right). End after sprint timer.
-                */
-                fastSideSpeed = sec13FastSideSpeed;
-                slowSideSpeed = sec13SlowSideSpeed;
-
-                if (sprintTimer.Test())
-                {
-                    courseSection = 14;
-                    // start turn tracking.
-                    turnTrackState = waitingForRightTurn;
-                    leftRightBias = 0;
-
-                }
+                ProcessStraightSection  //straight section right after the first right turn.
+                (
+                    sec13FastSideSpeed1,
+                    sec13SlowSideSpeed1,
+                    sec13FastSideSpeed2,
+                    sec13SlowSideSpeed2,
+                    14,
+                    right
+                );
                 break;
 
             case 14:
                 /*
-                    ***** second right turn. This is directly followed by a left turn, so
-                    we advance switch when we detect a right correction
+                    Second right turn. This is not followed by a straight section, so we need to do something
+                    different. The previous section transition set the turn tracking state to waitForRightTurn,
+                    and we are now in that right turn. We are going to let the turn tracking go all the way to
+                    the point where it detects a left turn. To do this, we have to tell the turn tracking code
+                    to look for a left turn, not a non-turn, so we set trackTurnTo = left;
                 */
                 fastSideSpeed = sec14FastSideSpeed;
                 slowSideSpeed = sec14SlowSideSpeed;
+                trackTurnTo = Left;
 
-                if (inTurn == left)//inCorrection == right)
+                if (inTurn == left)
                 {
                     courseSection = 15;
-                    // start turn tracking.
-                    turnTrackState = waitingForLeftTurn;
+                    turnTrackState = waitingForLeftTurn; //restart turn tracking for the left turn
                 }
                 break;
 
             case 15:
                 /*
                     ***** gentle left turn just before the turn onto the ramp. we advance to the
-                    next section when we detect the left side of the road, where the next right
-                    turn starts.
+                    next section when we detect a shift to a right turn.
                 */
                 fastSideSpeed = sec15FastSideSpeed;
                 slowSideSpeed = sec15SlowSideSpeed;
+                trackTurnTo = right;
+                
                 if (inTurn == right)
                 {
                     courseSection = 21;
-                    // start turn tracking.
-                    //turnTrackState = waitingForRightTurn;
+                    turnTrackState = waitingForRightTurn; //restart turn tracking.
                 }
                 break;
 
             case 21:
-                /*
-                    ***** Right turn onto up ramp. Track the turn until it ends.
-                */
-                fastSideSpeed = sec21FastSideSpeed;
-                slowSideSpeed = sec21SlowSideSpeed;
-
-                if (inTurn == none)
-                {
-                    courseSection = 22;
-                    // end turn tracking
-                    sprintTimer.Start(sec22SprintTime);
-                    turnTrackState = idle;
-                    leftRightBias = sec22LeftRightBias;
-                }
+                ProcessTurnSection  //right turn onto up ramp. track turn until it ends
+                (
+                    sec21FastSideSpeed,
+                    sec21SlowWideSpeed,
+                    22,
+                    sec22SprintTime,
+                    sec22LeftRightBias
+                );
                 break;
 
             case 22:
-                /*
-                ***** Straight section to turn at top of ramp (right). End after sprint timer.
-                */
-                fastSideSpeed = sec22FastSideSpeed;
-                slowSideSpeed = sec22SlowSideSpeed;
-                leftRightBias = sec22LeftRightBias;
 
-                if (sprintTimer.Test())
-                {
-                    courseSection = 31;
-                    // start turn tracking.
-                    turnTrackState = waitingForRightTurn;
-                    leftRightBias = 0;
 
-                }
+                ProcessStraightSection  //straight section to turn at top of ramp. End at start of turn.
+                (
+                    sec22FastSideSpeed1,
+                    sec22SlowSideSpeed1,
+                    sec22FastSideSpeed2,
+                    sec22SlowSideSpeed2,
+                    31,
+                    right
+                );
                 break;
 
             case 31:
@@ -1503,7 +1490,7 @@ void loop()
                 */
                 fastSideSpeed = sec31FastSideSpeed;
                 slowSideSpeed = sec31SlowSideSpeed;
-
+dummy = dummy;
                 if (inTurn == none)
                 {
                     courseSection = 32;
