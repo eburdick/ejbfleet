@@ -121,6 +121,11 @@
     right turns. Added functions to handle most straight and turn sections. Started modifying section
     code to use this new stuff. No compile today because more stuff has to be updated.
 
+    5/5/2021 Continued modifications of turn tracking code to use straight and turn sections. Added some
+    sections for the left side of the figure 8 because of the strict alternation between curved and
+    straight sections. More modifications to go, including constants to support this scheme,
+    so no compiles yet.
+
 */
 #define ANALOGSENSING  //using analog outputs of line sensors and software thresholds.
 
@@ -1300,13 +1305,13 @@ void loop()
             }
         }
         if (turnTrackState == tracking)
-        // When we are tracking a turn, we have already started the turn and we are going to track it until it ends,
-        // either by becoming a turn in the opposite direction, or no turn. We use the variable trackTurnTo to specify
-        // what end state we want to use. The default value if trackTurnTo == none, because most of our turns end in
-        // a straight section. In any of these cases, we stop the tracking when the end case is detected, so if we are
-        // looking for a left to right transition or a right to left transition, we need to restart the tracking
-        // sequence with turnTrackState = waitingForRightTurn or waitingForLeftTurn even though we will already be in that
-        // turn.
+            // When we are tracking a turn, we have already started the turn and we are going to track it until it ends,
+            // either by becoming a turn in the opposite direction, or no turn. We use the variable trackTurnTo to specify
+            // what end state we want to use. The default value if trackTurnTo == none, because most of our turns end in
+            // a straight section. In any of these cases, we stop the tracking when the end case is detected, so if we are
+            // looking for a left to right transition or a right to left transition, we need to restart the tracking
+            // sequence with turnTrackState = waitingForRightTurn or waitingForLeftTurn even though we will already be in that
+            // turn.
         {
             if (turnTimer.Test())
             {
@@ -1451,7 +1456,7 @@ void loop()
                 fastSideSpeed = sec15FastSideSpeed;
                 slowSideSpeed = sec15SlowSideSpeed;
                 trackTurnTo = right;
-                
+
                 if (inTurn == right)
                 {
                     courseSection = 21;
@@ -1485,102 +1490,85 @@ void loop()
                 break;
 
             case 31:
-                /*
-                    ***** Right turn onto down ramp. Track the turn until it ends.
-                */
-                fastSideSpeed = sec31FastSideSpeed;
-                slowSideSpeed = sec31SlowSideSpeed;
-dummy = dummy;
-                if (inTurn == none)
-                {
-                    courseSection = 32;
-                    // end turn tracking
-                    sprintTimer.Start(sec32SprintTime);
-                    leftRightBias = sec32LeftRightBias;
-                    turnTrackState = idle;
-                }
+                ProcessTurnSection  //right turn onto down ramp. track turn until it ends
+                (
+                    sec31FastSideSpeed,
+                    sec31SlowWideSpeed,
+                    32,
+                    sec32SprintTime,
+                    sec32LeftRightBias
+                );
                 break;
 
             case 32:
-                /*
-                ***** Straight section to turn at bottom of ramp (right). End after sprint timer. Note
-                    because this is a down ramp, the sprint is probably slower
-                */
-                fastSideSpeed = sec32FastSideSpeed;
-                slowSideSpeed = sec32SlowSideSpeed;
-                leftRightBias = sec32LeftRightBias;
-
-                if (sprintTimer.Test())
-                {
-                    courseSection = 41;
-                    // start turn tracking.
-                    turnTrackState = waitingForRightTurn;
-                    leftRightBias = 0;
-                }
+                ProcessStraightSection  //straight section to turn at bottom of ramp. End at start of turn.
+                (
+                    sec32FastSideSpeed1,
+                    sec32SlowSideSpeed1,
+                    sec32FastSideSpeed2,
+                    sec32SlowSideSpeed2,
+                    41,
+                    right
+                );
                 break;
 
             case 41:
-                /*
-                    ***** Right turn off of down ramp. Track the turn until it ends.
-                */
-                fastSideSpeed = sec41FastSideSpeed;
-                slowSideSpeed = sec41SlowSideSpeed;
-
-                if (inTurn == none)
-                {
-                    courseSection = 42;
-                    // end turn tracking
-                    sprintTimer.Start(sec42SprintTime);
-                    leftRightBias = sec42LeftRightBias;
-                    turnTrackState = idle;
-                }
+                ProcessTurnSection  //right turn off of down ramp. track turn until it ends
+                (
+                    sec41FastSideSpeed,
+                    sec41SlowWideSpeed,
+                    42,
+                    sec42SprintTime,
+                    sec42LeftRightBias
+                );
                 break;
 
             case 42:
-                /*
-                ***** Straight section to tunnel approach turn (right). End after sprint time.
-                */
-                fastSideSpeed = sec42FastSideSpeed;
-                slowSideSpeed = sec42SlowSideSpeed;
-
-                if (sprintTimer.Test())
-                {
-                    courseSection = 43;
-                    // start turn tracking.
-                    turnTrackState = waitingForRightTurn;
-                    leftRightBias = 0;
-                }
+                ProcessStraightSection  //Straight section to tunnel approach turn (right). End at start of turn.
+                (
+                    sec42FastSideSpeed1,
+                    sec42SlowSideSpeed1,
+                    sec42FastSideSpeed2,
+                    sec42SlowSideSpeed2,
+                    43,
+                    right
+                );
                 break;
 
             case 43:
-                /*
-                    ***** Right turn into tunnel. Track the turn until it ends. Because this is a gentle turn, the
-                    ending point may not be that accurate
-                */
-                fastSideSpeed = sec43FastSideSpeed;
-                slowSideSpeed = sec43SlowSideSpeed;
-
-                if (inTurn == none)
-                {
-                    courseSection = 44;
-                    // end turn tracking
-                    turnTrackState = idle;
-                }
+                ProcessTurnSection  //wide right turn into tunnel. track turn until it ends
+                (
+                    sec43FastSideSpeed,
+                    sec43SlowWideSpeed,
+                    43,
+                    sec44SprintTime,
+                    sec44LeftRightBias
+                );
                 break;
 
             case 44:
-                /*
-                ***** Straight section from middle of tunnel to first crosswalk. Ends at crosswalk.
-                */
-                fastSideSpeed = sec44FastSideSpeed;
-                slowSideSpeed = sec44SlowSideSpeed;
 
-                // This section ends at the end of the first crosswalk pause, which we detect
-                // by tesing the finishingCrosswalk flag, which is set just as the pause finishes.
+                // run at sprint speed during the sprint time. We want to slow down just before the crosswalk so
+                // we have time to stop before running into the road.
+                if (sprintTimer.Test())
+                {
+                    fastSideSpeed = sec44FastSideSpeed1;
+                    slowSideSpeed = sec44SlowSideSpeed1;
+                }
+                else
+                {
+                    fastSideSpeed = sec44FastSideSpeed2;
+                    slowSideSpeed = sec44SlowSideSpeed2;
+                }
+
+                // This section ends at the end of the crosswalk pause, which we detect
+                // by testing the finishingCrosswalk flag, which is set just as the pause finishes.
+                // This section is followed by the rest of this straight part, so we set up section
+                // 51 as a straight section.
 
                 if (finishingCrosswalk)
                 {
-                    finishingCrosswalk = false;
+                    finishingCrosswalk = false; //consume the flag
                     courseSection = 51;
                     sprintTimer.Start(sec51SprintTime);
                     leftRightBias = sec51LeftRightBias;
@@ -1588,137 +1576,145 @@ dummy = dummy;
                 break;
 
             case 51:
-                /*
-                ***** Straight section from first crosswalk to right turn into the figure 8. Ends with
-                    sprint timer. Note we add the pause delay to the sprint time because it will be advancing
-                    during the pause.
-                */
-                fastSideSpeed = sec51FastSideSpeed;
-                slowSideSpeed = sec51SlowSideSpeed;
-
-                if (sprintTimer.Test())
-                {
-                    courseSection = 52;
-                    // start turn tracking.
-                    turnTrackState = waitingForRightTurn;
-                    leftRightBias = 0;
-                }
+                ProcessStraightSection  //Straight section from first crosswalk to right turn into the figure 8. Ends with beginning of turn
+                (
+                    sec51FastSideSpeed1,
+                    sec5lSlowSideSpeed1,
+                    sec51SlowSideSpeed2,
+                    sec51SlowSideSpeed2,
+                    52,
+                    right
+                );
                 break;
 
             case 52:
+                ProcessTurnSection  //Right turn toward figure 8. Track the turn until it ends.
+                (
+                    sec52FastSideSpeed,
+                    sec52SlowWideSpeed,
+                    53,
+                    sec53SprintTime,
+                    sec53LeftRightBias
+                );
+                break;
+                
+            case 53:
                 /*
-                    ***** Right turn into turn toward figure 8. Track the turn until it ends.
-                */
-                fastSideSpeed = sec52FastSideSpeed;
-                slowSideSpeed = sec52SlowSideSpeed;
+                    Short straight section before a right dogleg. Ends whe the dogleg starts.
 
-                if (inTurn == none)
-                {
-                    courseSection = 53;
-                    // end turn tracking
-                    turnTrackState = idle;
-                }
+                */
+                ProcessStraightSection  //Straight section from first crosswalk to right turn into the figure 8. Ends with beginning of turn
+                (
+                    sec53FastSideSpeed1,
+                    sec53SlowSideSpeed1,
+                    sec53SlowSideSpeed2,
+                    sec53SlowSideSpeed2,
+                    54,
+                    right
+                );
                 break;
 
-            case 53:
+            case 54:
                 /*
                     ***** Right dogleg in figure 8. Ends at crosswalk when we exit mode pause.
                 */
-                fastSideSpeed = sec53FastSideSpeed;
-                slowSideSpeed = sec53SlowSideSpeed;
+                fastSideSpeed = sec54FastSideSpeed;
+                slowSideSpeed = sec54SlowSideSpeed;
 
                 if (finishingCrosswalk)
                 {
                     finishingCrosswalk = false;
+                    courseSection = 55;
+                    sprintTimer.Start(sec55SprintTime + pauseModeDuration); //
+                    leftRightBias = sec55LeftRightBias;
+                }
+                break;
+            case 55:
+
+                // run at sprint speed during the sprint time. We want to slow down just before the crosswalk so
+                // we have time to stop before running into the road.
+                if (sprintTimer.Test())
+                {
+                    fastSideSpeed = sec55FastSideSpeed1;
+                    slowSideSpeed = sec55SlowSideSpeed1;
+                }
+                else
+                {
+                    fastSideSpeed = sec55FastSideSpeed2;
+                    slowSideSpeed = sec55SlowSideSpeed2;
+                }
+
+                // This section ends at the end of the crosswalk pause, which we detect
+                // by testing the finishingCrosswalk flag, which is set just as the pause finishes.
+                // This section is followed by the rest of this straight part, so we set up section
+                // 51 as a straight section.
+
+                if (finishingCrosswalk)
+                {
+                    finishingCrosswalk = false; //consume the flag
                     courseSection = 61;
-                    sprintTimer.Start(sec61SprintTime + pauseModeDuration); //
-                    leftRightBias = sec61LeftRightBias;
+                    sprintTimer.Start(sec61SprintTime);
+                    leftRightBias = sec62LeftRightBias;
                 }
                 break;
 
             case 61:
-                /*
-                ***** Straight section from second crosswalk to first sharp left turn in figure 8.
-                    ends with sprint timer. We add pause mode duration to sprint time because this
-                    section starts at the beginning of the crosswalk pause;
-                */
-                fastSideSpeed = sec61FastSideSpeed;
-                slowSideSpeed = sec61SlowSideSpeed;
-
-                if (sprintTimer.Test())
-                {
-                    courseSection = 62;
-                    // start turn tracking.
-                    turnTrackState = waitingForLeftTurn;
-                    leftRightBias = 0;
-                }
+                ProcessStraightSection  //Straight section from second crosswalk to first sharp left turn in figure 8
+                (
+                    sec61FastSideSpeed1,
+                    sec61SlowSideSpeed1,
+                    sec61SlowSideSpeed2,
+                    sec61SlowSideSpeed2,
+                    62,
+                    left
+                );
                 break;
 
             case 62:
-                /*
-                    ***** First left turn at bottom of figure 8. Ends when turn ends.
-                */
-                fastSideSpeed = sec62FastSideSpeed;
-                slowSideSpeed = sec62SlowSideSpeed;
-
-                if (inTurn == none)
-                {
-                    courseSection = 63;
-                    sprintTimer.Start(sec63SprintTime);
-                    leftRightBias = sec63LeftRightBias;
-                    turnTrackState = idle;
-                }
+                ProcessTurnSection  //Left turn into bottom of figure 8. Track the turn until it ends.
+                (
+                    sec62FastSideSpeed,
+                    sec62SlowWideSpeed,
+                    63,
+                    sec63SprintTime,
+                    sec63LeftRightBias
+                );
                 break;
 
-            case 63:
-                /*
-                ***** Straight section at the bottom of the figure 8. Ends with sprint timer.
-                */
-                fastSideSpeed = sec63FastSideSpeed;
-                slowSideSpeed = sec63SlowSideSpeed;
-
-                if (sprintTimer.Test())
-                {
-                    courseSection = 64;
-                    // start turn tracking.
-                    turnTrackState = waitingForLeftTurn;
-                    leftRightBias = 0;
-                }
+            case 63:                
+                ProcessStraightSection  //Straight section at the bottom of the figure 8. Ends at left turn out of figure 8
+                (
+                    sec63FastSideSpeed1,
+                    sec63SlowSideSpeed1,
+                    sec63SlowSideSpeed2,
+                    sec63SlowSideSpeed2,
+                    64,
+                    left
+                );
                 break;
 
             case 64:
-                /*
-                    ***** second left turn at bottom of figure 8. Ends when turn ends.
-                */
-                fastSideSpeed = sec64FastSideSpeed;
-                slowSideSpeed = sec64SlowSideSpeed;
-
-                if (inTurn == none)
-                {
-                    courseSection = 65;
-                    sprintTimer.Start(sec65SprintTime);
-                    leftRightBias = sec65LeftRightBias;
-                    turnTrackState = idle;
-                }
+                ProcessTurnSection  //Left turn toward the figure 8 crossing point. Track the turn until it ends.
+                (
+                    sec64FastSideSpeed,
+                    sec64SlowWideSpeed,
+                    65,
+                    sec65SprintTime,
+                    sec65LeftRightBias
+                );
                 break;
-
+                           
             case 65:
-                /*
-                    ***** Straight section coming out of the bottom of the figure 8. Sprint to dogleg.
-                    Ends with sprint timer.
-                */
-                fastSideSpeed = sec65FastSideSpeed;
-                slowSideSpeed = sec65SlowSideSpeed;
-
-                if (sprintTimer.Test())
-                {
-                    courseSection = 71;
-                    // start turn tracking.
-                    turnTrackState = waitingForRightTurn;
-                    leftRightBias = 0;
-                }
-                break;
-
+                ProcessStraightSection  //Straight section coming out of the bottom of the figure 8. Ends with dogleg turn.
+                (
+                    sec65FastSideSpeed1,
+                    sec65SlowSideSpeed1,
+                    sec65SlowSideSpeed2,
+                    sec65SlowSideSpeed2,
+                    71,
+                    right
+                );
+/////change from here
             case 71:
                 /*
                     ***** Right dogleg after crossing center of figure 8 . Ends when turn ends.
