@@ -129,6 +129,12 @@
     5/7/2021 Finished modifications of turn tracking code and supporting global constants and worked out
     compilation errors. Code now compiles without errors. Next steps: bench tests, track tests, tuning.
 
+    5/8/2021 Finished bench debugging. Still confused about why everything but the 21 to 22 transition gets
+    stuck in idle tracking without an extra statement to restart tracking, but all sections are updating as
+    expected when the robot is just manually turned in the expected directions. Debugging print statements
+    display the progress through the sequence for now. Next step is testing on the track and tuning the 
+    speeds and delays and maybe the gyro thresholds. And I would like to solve the 21 to 22 mystery.
+
 */
 #define ANALOGSENSING  //using analog outputs of line sensors and software thresholds.
 
@@ -203,8 +209,8 @@ const int turnSampleInterval = 100;
 
 // turn thresholds are the total value of the sum of rotation values we count per time slot to
 // define entering and exiting a turn. This number will go up with the size of the time interval.
-const int turnStartThreshold = 30;
-const int turnEndThreshold = 20;
+const int turnStartThreshold = 3;
+const int turnEndThreshold = 2;
 
 int courseSection; //state variable stores which section we are in. Initialized in setup()
 //
@@ -224,7 +230,7 @@ int courseSection; //state variable stores which section we are in. Initialized 
 // curves. If the bias is positive, it will curve to the right, and if it is negative, it will
 // curve to the left.
 //
-// SprintTime is the number of milliseconds to run with *FastSideSpeed1 and *SlowSideSpeed1 in 
+// SprintTime is the number of milliseconds to run with *FastSideSpeed1 and *SlowSideSpeed1 in
 // a straight run. After that time, we run with *FastSideSpeed2 and *SlowSideSpeed2 until an
 // event moves us to the next track subsection, which is either at a turn or at a crosswalk.
 // Too long a sprint time may cause a turn to be
@@ -346,7 +352,7 @@ const int sec61SprintTime = 500;
 const int sec61LeftRightBias = 0;
 
 // first turn at bottom of fig 8 left 120 degrees
-const int sec62FastSideSpeed = 130;  
+const int sec62FastSideSpeed = 130;
 const int sec62SlowSideSpeed = -130;
 
 //Straight section at the bottom of the figure 8. Ends at left turn out of figure 8
@@ -630,8 +636,10 @@ int previousCorrection;
 int turnState;
 int turnDirection;
 int turnTrackState;
+int prevTurnTrackState; //for debug prints
 int inTurn;
 int trackTurnTo;
+int prevTrackTurnTo; //for debug prints
 
 // Robot rotation rate around Z axis and accleration in the X axis.
 float zRotationRate;
@@ -680,6 +688,7 @@ void ProcessStraightSection
     int nextSectionTurn
 )
 {
+
     // Since we are in a straight section, there will only be small corrections leading up to
     // the turn in the next section, so we start looking for the turn here.
     if (nextSectionTurn == right)
@@ -690,7 +699,14 @@ void ProcessStraightSection
     {
         turnTrackState = waitingForLeftTurn;
     }
-
+    /*
+        Serial.print("Process Straight - Section: ");
+        Serial.print(courseSection);
+        Serial.print(" inTurn: ");
+        Serial.print(inTurn);
+        Serial.print(" turnTrackState: ");
+        Serial.println(turnTrackState);
+    */
     // run at sprint speed during the sprint time. This should end before the next track section just
     // to avoid going too fast to start the turn.
     if (sprintTimer.Test())
@@ -705,6 +721,11 @@ void ProcessStraightSection
     }
     if (inTurn == nextSectionTurn)
     {
+        Serial.print("ProcessStraightSection new section: ");
+        Serial.print(nextSection);
+        Serial.print(" inTurn: ");
+        Serial.println(inTurn);
+
         courseSection = nextSection;
     }
 }
@@ -725,10 +746,19 @@ void ProcessTurnSection
     // set speeds for the turn
     fastSideSpeed = turnFastSideSpeed;
     slowSideSpeed = turnSlowSideSpeed;
-
+    //Serial.print(">");
     //test if the turn is finished. If so, set up for the next track section (straight)
+    /*    Serial.print("Process Turn - Section: ");
+        Serial.print(courseSection);
+        Serial.print(" inTurn: ");
+        Serial.print(inTurn);
+        Serial.print(" turnTrackState: ");
+        Serial.println(turnTrackState); */
     if (inTurn == none)
     {
+        Serial.print("ProcessTurnSection new section: ");
+        Serial.print(nextSection);
+        Serial.println(" inTurn==none");
         courseSection = nextSection;
         // end turn tracking
         turnTrackState = idle;
@@ -1287,7 +1317,7 @@ void loop()
             the gyro, we can directly detect the turns and the ends of the turns and leave the sprint
             timers to the job of controlling speed, not track section switching.
 
-            1. Don' use the sprint timer for switching track sections. Instead, use the timers just to
+            1. Don't use the sprint timer for switching track sections. Instead, use the timers just to
             control the speed through most of a straight section. Add another speed for after the
             timer expires to avoid overruns at the beginning of turns, though biasing the straight section
             toward the outside of turn might be adequate for everything except sudden changes in direction
@@ -1343,11 +1373,30 @@ void loop()
             // We start the timer every time here so that when turn detection starts, this time
             // will be in sync.
             turnTimer.Start(turnSampleInterval);
+
+            // DEBUG
+            if (prevTurnTrackState != turnTrackState)
+            {
+                Serial.print(millis());
+                Serial.println(" idle");
+                prevTurnTrackState = idle;
+            }// END DEBUG
+
         }
         else if (turnTrackState == waitingForRightTurn)
         {
             if (turnTimer.Test())
             {
+                //Serial.println(rotationAccum);
+
+                // DEBUG
+                if (prevTurnTrackState != turnTrackState)
+                {
+                    Serial.print(millis());
+                    Serial.println(" waitingForRightTurn");
+                    prevTurnTrackState = waitingForRightTurn;
+                }// END DEBUG
+
                 // timer has expired. Test the accumulated turn events to see if we have detected
                 // the existence of a right turn. If so, change turnTrackState to tracking.
                 if (rotationAccum < -turnStartThreshold) //right turn is negative
@@ -1370,6 +1419,16 @@ void loop()
         {
             if (turnTimer.Test())
             {
+                //Serial.println(rotationAccum);
+
+                // DEBUG
+                if (prevTurnTrackState != turnTrackState)
+                {
+                    Serial.print(millis());
+                    Serial.println(" waitingForLeftTurn");
+                    prevTurnTrackState = waitingForLeftTurn;
+                }// END DEBUG
+
                 // timer has expired. Test the accumulated turn events to see if we have detected
                 // the existence of a left turn. If so, change turnTrackState to tracking.
                 if (rotationAccum > turnStartThreshold) //left rotation is positive
@@ -1399,20 +1458,30 @@ void loop()
         {
             if (turnTimer.Test())
             {
+                //Serial.println(rotationAccum);
+
+                // DEBUG
+
+                if (prevTurnTrackState != turnTrackState)
+                {
+                    Serial.print(millis());
+                    Serial.println(" tracking");
+                    prevTurnTrackState = tracking;
+                }// END DEBUG
+
                 // timer has expired. Test the accumulated turn events to see if we have detected
                 // the specified trackTurnTo target value. If so, change turnTrackState to idle.
-                if (trackTurnTo == none)
+
+                if (trackTurnTo == left)
                 {
-                    if (abs(rotationAccum) < turnEndThreshold) // absolute value of accumulated rotation below the
+                    // DEBUG
+                    if (prevTrackTurnTo != trackTurnTo)
                     {
-                        // Absolute value of accumulated rotation is below the "not in turn" threshold.
-                        // Turn is finished.
-                        turnTrackState = idle;
-                        inTurn = none;
+                        Serial.println("   tracking until left");
+                        prevTrackTurnTo = trackTurnTo;
                     }
-                }
-                else if (trackTurnTo == left)
-                {
+                    // End DEBUG
+
                     if (rotationAccum > turnStartThreshold) //left rotation is positive
                     {
                         // accumulated rotation is > the turn start threshold, so we are now in a left turn
@@ -1421,10 +1490,24 @@ void loop()
                         turnTrackState = idle;
                         inTurn = left;
                         trackTurnTo = none; // resetting to the default
+
+                        // DEBUG
+                        Serial.println("     left turn detected. inTurn==left");
+                        // End DEBUG
+
+
                     }
                 }
-                else //trackTurnTo == right by default
+                else if (trackTurnTo == right)
                 {
+                    // DEBUG
+                    if (prevTrackTurnTo != trackTurnTo)
+                    {
+                        Serial.println("   tracking until right");
+                        prevTrackTurnTo = trackTurnTo;
+                    }
+                    // End DEBUG
+
                     if (rotationAccum < -turnStartThreshold)
                     {
                         // right turn rotation is negative, so we tested against -threshold. The test is true,
@@ -1433,8 +1516,38 @@ void loop()
                         turnTrackState = idle;
                         inTurn = right;
                         trackTurnTo = none; // resetting to the default
+                        // DEBUG
+                        Serial.println("     right turn detected. inTurn==right");
+                        // End DEBUG
+
+
                     }
                 }
+
+                else //if (trackTurnTo == none)
+                {
+                    // DEBUG
+                    if (prevTrackTurnTo != trackTurnTo)
+                    {
+                        Serial.println("   tracking to none");
+                        prevTrackTurnTo = trackTurnTo;
+                    }
+                    // End DEBUG
+
+                    if (abs(rotationAccum) < turnEndThreshold) // absolute value of accumulated rotation below the
+                    {
+                        // Absolute value of accumulated rotation is below the "not in turn" threshold.
+                        // Turn is finished.
+                        turnTrackState = idle;
+                        inTurn = none;
+
+                        // DEBUG
+                        Serial.println("     End of turn detected. inTurn==none");
+                        // End DEBUG
+
+                    }
+                }
+
                 // whether or not we are changing state, we want to start the timer
                 // again and zero the accumulator
                 turnTimer.Start(turnSampleInterval);
@@ -1529,6 +1642,8 @@ void loop()
                 {
                     courseSection = 15;
                     turnTrackState = waitingForLeftTurn; //restart turn tracking for the left turn
+                    Serial.print("new section: 15 inTurn: ");
+                    Serial.println(inTurn);
                 }
                 break;
 
@@ -1544,11 +1659,16 @@ void loop()
                 if (inTurn == right)
                 {
                     courseSection = 21;
-                    turnTrackState = waitingForRightTurn; //restart turn tracking.
+                    turnTrackState = tracking;//waitingForRightTurn; //restart turn tracking.
+                    Serial.print("new section: 21 inTurn: ");
+                    Serial.println(inTurn);
                 }
                 break;
 
             case 21:
+
+                turnTrackState = tracking;
+
                 ProcessTurnSection  //right turn onto up ramp. track turn until it ends
                 (
                     sec21FastSideSpeed,
@@ -1624,7 +1744,7 @@ void loop()
                 (
                     sec43FastSideSpeed,
                     sec43SlowSideSpeed,
-                    43,
+                    44,
                     sec44SprintTime,
                     sec44LeftRightBias
                 );
@@ -1656,6 +1776,9 @@ void loop()
                     courseSection = 51;
                     sprintTimer.Start(sec51SprintTime);
                     leftRightBias = sec51LeftRightBias;
+                    Serial.println("crosswalk finished");
+                    Serial.print("new section: 51 inTurn: ");
+                    Serial.println(inTurn);
                 }
                 break;
 
@@ -1730,6 +1853,9 @@ void loop()
                     courseSection = 61;
                     sprintTimer.Start(sec61SprintTime);
                     leftRightBias = sec61LeftRightBias;
+                    Serial.println("crosswalk finished");
+                    Serial.print("new section: 61 inTurn: ");
+                    Serial.println(inTurn);
                 }
                 break;
 
@@ -1823,7 +1949,7 @@ void loop()
                     sec74SprintTime,
                     sec74LeftRightBias
                 );
-            break;
+                break;
 
             case 74:
                 ProcessStraightSection  //Straight section to right turn onto banked section. Ends at right turn
@@ -1836,7 +1962,7 @@ void loop()
                     right
                 );
                 break;
-                
+
             case 81:
                 ProcessTurnSection  //Right turn to banked section. Ends when turn ends.
                 (
@@ -1873,21 +1999,21 @@ void loop()
 
             case 84:
                 /*
-                    Straight section to finish line. Because the finish line is a double line, the double 
+                    Straight section to finish line. Because the finish line is a double line, the double
                     line detection code will know it is the finish line and do its finish line routine
                     (run past the finish line on a timer, then switch to standby mode.)
                 */
-                ProcessStraightSection  
+                ProcessStraightSection
                 (
                     sec84FastSideSpeed1,
                     sec84SlowSideSpeed1,
                     sec84SlowSideSpeed2,
                     sec84SlowSideSpeed2,
                     85,
-                    right               // this state should never end because the robot will go to 
-                                        // standby mode first, but if that fails to happen, we will
-                                        // detect the first turn after the start/end line and stop in 
-                                        // section 85, below.
+                    right               // this state should never end because the robot will go to
+                    // standby mode first, but if that fails to happen, we will
+                    // detect the first turn after the start/end line and stop in
+                    // section 85, below.
                 );
                 break;
 
