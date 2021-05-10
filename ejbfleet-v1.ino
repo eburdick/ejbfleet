@@ -132,11 +132,15 @@
     5/8/2021 Finished bench debugging. Still confused about why everything but the 21 to 22 transition gets
     stuck in idle tracking without an extra statement to restart tracking, but all sections are updating as
     expected when the robot is just manually turned in the expected directions. Debugging print statements
-    display the progress through the sequence for now. Next step is testing on the track and tuning the 
+    display the progress through the sequence for now. Next step is testing on the track and tuning the
     speeds and delays and maybe the gyro thresholds. And I would like to solve the 21 to 22 mystery.
+
+    5/9/2021 added conditionals for print statements
 
 */
 #define ANALOGSENSING  //using analog outputs of line sensors and software thresholds.
+#define DEBUGTURNTRACK
+//#define DEBUGTURNSENSE
 
 #include <arduino.h>
 #include <Adafruit_MPU6050.h> //Adafruit library for for inertial measurement unit
@@ -699,14 +703,7 @@ void ProcessStraightSection
     {
         turnTrackState = waitingForLeftTurn;
     }
-    /*
-        Serial.print("Process Straight - Section: ");
-        Serial.print(courseSection);
-        Serial.print(" inTurn: ");
-        Serial.print(inTurn);
-        Serial.print(" turnTrackState: ");
-        Serial.println(turnTrackState);
-    */
+
     // run at sprint speed during the sprint time. This should end before the next track section just
     // to avoid going too fast to start the turn.
     if (sprintTimer.Test())
@@ -721,11 +718,6 @@ void ProcessStraightSection
     }
     if (inTurn == nextSectionTurn)
     {
-        Serial.print("ProcessStraightSection new section: ");
-        Serial.print(nextSection);
-        Serial.print(" inTurn: ");
-        Serial.println(inTurn);
-
         courseSection = nextSection;
     }
 }
@@ -746,19 +738,8 @@ void ProcessTurnSection
     // set speeds for the turn
     fastSideSpeed = turnFastSideSpeed;
     slowSideSpeed = turnSlowSideSpeed;
-    //Serial.print(">");
-    //test if the turn is finished. If so, set up for the next track section (straight)
-    /*    Serial.print("Process Turn - Section: ");
-        Serial.print(courseSection);
-        Serial.print(" inTurn: ");
-        Serial.print(inTurn);
-        Serial.print(" turnTrackState: ");
-        Serial.println(turnTrackState); */
     if (inTurn == none)
     {
-        Serial.print("ProcessTurnSection new section: ");
-        Serial.print(nextSection);
-        Serial.println(" inTurn==none");
         courseSection = nextSection;
         // end turn tracking
         turnTrackState = idle;
@@ -1294,12 +1275,12 @@ void loop()
         // application. Set the timer for tne next read.
         imuGyroTimer.Start(imuTimeStep);
     }
-    /*
-        Serial.print("Z rotation: ");
-        Serial.print(zRotationRate);
-        Serial.print ("X accel: ");
-        Serial.println(xAcceleration);
-    */
+#ifdef DEBUGTURNSENSE
+    Serial.print("Z rotation: ");
+    Serial.print(zRotationRate);
+    Serial.print ("X accel: ");
+    Serial.println(xAcceleration);
+#endif
 
     /*                      _                   _   _   _    _  _   _   _
                            |_) | | |\ |   |\/| / \ | \ |_   /  / \ | \ |_
@@ -1374,13 +1355,14 @@ void loop()
             // will be in sync.
             turnTimer.Start(turnSampleInterval);
 
-            // DEBUG
+#ifdef DEBUGTURNTRACK
             if (prevTurnTrackState != turnTrackState)
             {
                 Serial.print(millis());
                 Serial.println(" idle");
                 prevTurnTrackState = idle;
-            }// END DEBUG
+            }
+#endif
 
         }
         else if (turnTrackState == waitingForRightTurn)
@@ -1389,13 +1371,14 @@ void loop()
             {
                 //Serial.println(rotationAccum);
 
-                // DEBUG
+#ifdef DEBUGTURNTRACK
                 if (prevTurnTrackState != turnTrackState)
                 {
                     Serial.print(millis());
                     Serial.println(" waitingForRightTurn");
                     prevTurnTrackState = waitingForRightTurn;
-                }// END DEBUG
+                }
+#endif
 
                 // timer has expired. Test the accumulated turn events to see if we have detected
                 // the existence of a right turn. If so, change turnTrackState to tracking.
@@ -1421,13 +1404,14 @@ void loop()
             {
                 //Serial.println(rotationAccum);
 
-                // DEBUG
+#ifdef DEBUGTURNTRACK
                 if (prevTurnTrackState != turnTrackState)
                 {
                     Serial.print(millis());
                     Serial.println(" waitingForLeftTurn");
                     prevTurnTrackState = waitingForLeftTurn;
-                }// END DEBUG
+                }
+#endif
 
                 // timer has expired. Test the accumulated turn events to see if we have detected
                 // the existence of a left turn. If so, change turnTrackState to tracking.
@@ -1460,28 +1444,26 @@ void loop()
             {
                 //Serial.println(rotationAccum);
 
-                // DEBUG
-
+#ifdef DEBUGTURNTRACK
                 if (prevTurnTrackState != turnTrackState)
                 {
                     Serial.print(millis());
                     Serial.println(" tracking");
                     prevTurnTrackState = tracking;
-                }// END DEBUG
-
+                }
+#endif
                 // timer has expired. Test the accumulated turn events to see if we have detected
                 // the specified trackTurnTo target value. If so, change turnTrackState to idle.
 
                 if (trackTurnTo == left)
                 {
-                    // DEBUG
+#ifdef DEBUGTURNTRACK
                     if (prevTrackTurnTo != trackTurnTo)
                     {
                         Serial.println("   tracking until left");
                         prevTrackTurnTo = trackTurnTo;
                     }
-                    // End DEBUG
-
+#endif
                     if (rotationAccum > turnStartThreshold) //left rotation is positive
                     {
                         // accumulated rotation is > the turn start threshold, so we are now in a left turn
@@ -1490,10 +1472,9 @@ void loop()
                         turnTrackState = idle;
                         inTurn = left;
                         trackTurnTo = none; // resetting to the default
-
-                        // DEBUG
+#ifdef DEBUGTURNTRACK
                         Serial.println("     left turn detected. inTurn==left");
-                        // End DEBUG
+#endif
 
 
                     }
@@ -1501,13 +1482,14 @@ void loop()
                 else if (trackTurnTo == right)
                 {
                     // DEBUG
+#ifdef DEBUGTURNTRACK
                     if (prevTrackTurnTo != trackTurnTo)
                     {
+
                         Serial.println("   tracking until right");
                         prevTrackTurnTo = trackTurnTo;
                     }
-                    // End DEBUG
-
+#endif
                     if (rotationAccum < -turnStartThreshold)
                     {
                         // right turn rotation is negative, so we tested against -threshold. The test is true,
@@ -1516,35 +1498,31 @@ void loop()
                         turnTrackState = idle;
                         inTurn = right;
                         trackTurnTo = none; // resetting to the default
-                        // DEBUG
+#ifdef DEBUGTURNTRACK
                         Serial.println("     right turn detected. inTurn==right");
-                        // End DEBUG
-
+#endif
 
                     }
                 }
 
                 else //if (trackTurnTo == none)
                 {
-                    // DEBUG
+#ifdef DEBUGTURNTRACK
                     if (prevTrackTurnTo != trackTurnTo)
                     {
                         Serial.println("   tracking to none");
                         prevTrackTurnTo = trackTurnTo;
                     }
-                    // End DEBUG
-
+#endif
                     if (abs(rotationAccum) < turnEndThreshold) // absolute value of accumulated rotation below the
                     {
                         // Absolute value of accumulated rotation is below the "not in turn" threshold.
                         // Turn is finished.
                         turnTrackState = idle;
                         inTurn = none;
-
-                        // DEBUG
+#ifdef DEBUGTURNTRACK
                         Serial.println("     End of turn detected. inTurn==none");
-                        // End DEBUG
-
+#endif
                     }
                 }
 
@@ -1642,8 +1620,6 @@ void loop()
                 {
                     courseSection = 15;
                     turnTrackState = waitingForLeftTurn; //restart turn tracking for the left turn
-                    Serial.print("new section: 15 inTurn: ");
-                    Serial.println(inTurn);
                 }
                 break;
 
@@ -1660,8 +1636,6 @@ void loop()
                 {
                     courseSection = 21;
                     turnTrackState = tracking;//waitingForRightTurn; //restart turn tracking.
-                    Serial.print("new section: 21 inTurn: ");
-                    Serial.println(inTurn);
                 }
                 break;
 
@@ -1776,9 +1750,6 @@ void loop()
                     courseSection = 51;
                     sprintTimer.Start(sec51SprintTime);
                     leftRightBias = sec51LeftRightBias;
-                    Serial.println("crosswalk finished");
-                    Serial.print("new section: 51 inTurn: ");
-                    Serial.println(inTurn);
                 }
                 break;
 
@@ -1853,9 +1824,6 @@ void loop()
                     courseSection = 61;
                     sprintTimer.Start(sec61SprintTime);
                     leftRightBias = sec61LeftRightBias;
-                    Serial.println("crosswalk finished");
-                    Serial.print("new section: 61 inTurn: ");
-                    Serial.println(inTurn);
                 }
                 break;
 
