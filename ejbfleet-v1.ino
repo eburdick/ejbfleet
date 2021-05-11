@@ -137,9 +137,46 @@
 
     5/9/2021 added conditionals for print statements
 
+    5/10/2021 Testing on the track:
+
+    Added new batteries. Code changes as follows...
+
+    1...Tweaked turn detection thresholds, but not all turns need the same values, so I added new
+    constants for wide, normal, and tight turns. But for the long (wide) turn into the tunnel, the
+    transition from the turn to the straight section after it is too subtle to accurately
+    distinguish. Change for this: make the detection more sensitive just for that turn, but use
+    the darkness of the tunnel to detect the end of the turn. This happens a bit before the turn
+    ends, but should not be a problem, because we take this turn fast.
+
+            New code written: Use ambient light reduction to switch from section 43 to 44.
+
+    2...Tweaked sprint times and agressiveness of corrections at the beginnings of turns. A lot of
+    playing with speeds.  More to be done here to make turns more reliable and speed up the run.
+
+            Coding changes: created turn detection thresholds for specific turns that need help
+            instead of lumping everything into tight, normal and wide. Problem turns I know about
+            are section 43, which is very difficult to tweak for both start and end, section 52, which
+            is a pretty tight turn, and was missing in testing, and section 81
+            at the top of the banked section. It is a pretty tight turn, so we should be able to
+            detect it by reducing the threshold. 
+            
+            Possible if needed: add code to detect the bank and force the end of the section 81 turn.
+
+    3...The turn onto the banked section is not working most of the time, so the section count is off.
+    Tweaking the turn detect sensitively and the speed of the turn may solve it, but we can also sense
+    the bank itself to provide some redundancy. I sampled the Y accelerometer value for the bank and
+    starting line to support this. While I was at it I took samples for X acceration on the ramps...
+       - Y Tilt on banked section: > 1.5 ( ~ 0.6 at starting line)
+       - X tilt on upramp > 1.7 ( ~ 0.7 ??? at starting line)
+       - X tilt on downramp < 0.5 at top, < 0.8 at middle
+
+    Other coding stuff that could be done: use the X tilt value to detect the bump at the top of
+    the up ramp to deal with the stalling issue, maybe with wiggle or a quick pivot to the right.
+
+    Removed conditional compile for analog sensing. Removed digital sensing code.
+
 */
-#define ANALOGSENSING  //using analog outputs of line sensors and software thresholds.
-#define DEBUGTURNTRACK
+//#define DEBUGTURNTRACK
 //#define DEBUGTURNSENSE
 
 #include <arduino.h>
@@ -209,12 +246,20 @@ const int displayRefreshPeriod = 13;
 // decision on whether to advance the section counter. This should be happening several
 // times a second. The longer this period, the better smoothing we will have to avoid
 // local minima. Too long will make the section boundaries too inaccurate.
-const int turnSampleInterval = 100;
+const int turnSampleInterval = 300;
 
 // turn thresholds are the total value of the sum of rotation values we count per time slot to
 // define entering and exiting a turn. This number will go up with the size of the time interval.
-const int turnStartThreshold = 3;
-const int turnEndThreshold = 2;
+float turnStartThreshold;
+float turnEndThreshold;
+const float normalTurnStartThreshold = 15.0;
+const float sec52TurnStartThreshold = 12.0;
+const float sec81TurnStartThreshold = 12.0;
+const float sec43TurnStartThreshold = 10.0;  // hard turn to detect. Make it more sensitive. Turn end
+// detected by tunnel entrance.
+const float normalTurnEndThreshold = 7.0;
+const float sec52TurnEndThreshold = 7.0;
+const float sec81TurnEndThreshold = 7.0;
 
 int courseSection; //state variable stores which section we are in. Initialized in setup()
 //
@@ -243,13 +288,13 @@ int courseSection; //state variable stores which section we are in. Initialized 
 const int sec11FastSideSpeed1 = 240;
 const int sec11SlowSideSpeed1 = 50;    // gentle correction
 const int sec11FastSideSpeed2 = 130;   // post sprint speed
-const int sec11SlowSideSpeed2 = -130;    // Post sprint correction speed
-const int sec11SprintTime = 2300;     // duration of sprint time before starting turn
+const int sec11SlowSideSpeed2 = -180;    // Post sprint correction speed
+const int sec11SprintTime = 2400;     // duration of sprint time before starting turn
 const int sec11LeftRightBias = 0;
 
 // first turn (right)
-const int sec12FastSideSpeed = 100;   // fast side speed for first turn right 60 degrees
-const int sec12SlowSideSpeed = -200;  // slow side speed for first turn
+const int sec12FastSideSpeed = 130;   // fast side speed for first turn right 60 degrees
+const int sec12SlowSideSpeed = -50;  // slow side speed for first turn
 
 // straight section
 const int sec13FastSideSpeed1  = 200;  // speed for short sprint between right turns
@@ -261,15 +306,15 @@ const int sec13LeftRightBias = 0;
 
 // second turn (right)
 const int sec14FastSideSpeed = 130;   // fast side speed for second turn right 80 degrees
-const int sec14SlowSideSpeed = -130;  // slow side speed for gentle turns
+const int sec14SlowSideSpeed = -50;  // slow side speed for gentle turns
 
 // third turn (left)
 const int sec15FastSideSpeed = 130;   // fast side speed for third turn left 80 degrees
-const int sec15SlowSideSpeed = -130;  // slow side speed for third turn
+const int sec15SlowSideSpeed = -50;  // slow side speed for third turn
 
 // courseSection 2 constants (turn onto ramp to turn at the top of the ramp)
 const int sec21FastSideSpeed = 150;   // fast side speed for turn onto ramp right 140 degrees
-const int sec21SlowSideSpeed = -150;  // slow side speed for turn onto ramp
+const int sec21SlowSideSpeed = -100;  // slow side speed for turn onto ramp
 
 //straight section to turn at top of ramp. End at start of turn.
 const int sec22FastSideSpeed1 = 240;   // speed up the ramp
@@ -284,9 +329,9 @@ const int sec31FastSideSpeed = 130;  // turn at top of ramp right 90 degrees
 const int sec31SlowSideSpeed = -130;
 
 //straight section to turn at bottom of ramp. End at start of turn.
-const int sec32FastSideSpeed1 = 100;  // speed down the ramp
+const int sec32FastSideSpeed1 = 200;  // speed down the ramp
 const int sec32SlowSideSpeed1 = 0;    // gentle correction
-const int sec32FastSideSpeed2 = 130;   // post sprint speed
+const int sec32FastSideSpeed2 = 100;   // post sprint speed
 const int sec32SlowSideSpeed2 = -130;    // Post sprint correction speed
 const int sec32SprintTime = 1600;     // duration of sprint time before turn at bottom
 const int sec32LeftRightBias = 20;    // stay to right to avoid premature right turn
@@ -304,15 +349,15 @@ const int sec42SprintTime = 300;
 const int sec42LeftRightBias = 0;
 
 //wide right turn into tunnel. track turn until it ends
-const int sec43FastSideSpeed = 130;  // tunnel approach curve right 180 degrees
-const int sec43SlowSideSpeed = -130;
+const int sec43FastSideSpeed = 220;  // tunnel approach curve right 180 degrees
+const int sec43SlowSideSpeed = 70;
 
 //straight section to crosswalk
-const int sec44FastSideSpeed1 = 200;  // short sprint to first crosswalk
+const int sec44FastSideSpeed1 = 220;  // short sprint to first crosswalk
 const int sec44SlowSideSpeed1 = 50;   // gentle correction
 const int sec44FastSideSpeed2 = 130;   // post sprint speed
 const int sec44SlowSideSpeed2 = -130;    // Post sprint correction speed
-const int sec44SprintTime = 300;
+const int sec44SprintTime = 200;
 const int sec44LeftRightBias = 0;
 
 //Straight section from first crosswalk to right turn into the figure 8. Ends with beginning of turn
@@ -325,7 +370,7 @@ const int sec51LeftRightBias = 0;
 
 //Right turn toward figure 8. Track the turn until it ends.
 const int sec52FastSideSpeed = 130;  // first turn right 90 degrees
-const int sec52SlowSideSpeed = -130;
+const int sec52SlowSideSpeed = -100;
 
 //Short straight section before a right dogleg. Ends when the dogleg starts.
 const int sec53FastSideSpeed1 = 130;   // sprint speed
@@ -350,9 +395,9 @@ const int sec55LeftRightBias = 0;
 // courseSection 6 constants (bottom of figure 8 to second dogleg, passing three cross lines)
 const int sec61FastSideSpeed1 = 130;  // sprint to first turn
 const int sec61SlowSideSpeed1 = 50;   // gentle correction
-const int sec61FastSideSpeed2 = 130;   // post sprint speed
-const int sec61SlowSideSpeed2 = -130;    // Post sprint correction speed
-const int sec61SprintTime = 500;
+const int sec61FastSideSpeed2 = 100;   // post sprint speed
+const int sec61SlowSideSpeed2 = -150;    // Post sprint correction speed
+const int sec61SprintTime = 100;
 const int sec61LeftRightBias = 0;
 
 // first turn at bottom of fig 8 left 120 degrees
@@ -374,16 +419,16 @@ const int sec64SlowSideSpeed = -130;
 //Straight section coming out of the bottom of the figure 8. Ends with dogleg right turn.
 const int sec65FastSideSpeed1 = 200;  // sprint to dogleg
 const int sec65SlowSideSpeed1 = 50;   // gentle correction
-const int sec65FastSideSpeed2 = 130;   // post sprint speed
-const int sec65SlowSideSpeed2 = -130;    // Post sprint correction speed
-const int sec65SprintTime = 500;
+const int sec65FastSideSpeed2 = 100;   // post sprint speed
+const int sec65SlowSideSpeed2 = -180;    // Post sprint correction speed
+const int sec65SprintTime = 800;
 const int sec65LeftRightBias = 0;
 
 // courseSection 7 constants (detecting dogleg and turning right, passing two cross lines, then 90 degree right,
 // straight sprint up to turn onto banked section
 
 //Right dogleg turn after crossing center of figure 8 . Ends when turn ends.
-const int sec71FastSideSpeed = 130;   // turning at dogleg
+const int sec71FastSideSpeed = 100;   // turning at dogleg
 const int sec71SlowSideSpeed = -200;  // agressive turn
 
 //Straight section exiting the figure 8, ending right turn
@@ -411,7 +456,7 @@ const int sec81FastSideSpeed = 130;  // turning onto banked section
 const int sec81SlowSideSpeed = -130;
 
 //Straight banked section to right turn to home stretch section.
-const int sec82FastSideSpeed1 = 200;  // sprint on banked section
+const int sec82FastSideSpeed1 = 240;  // sprint on banked section
 const int sec82SlowSideSpeed1 = 50;   // gentle correction
 const int sec82FastSideSpeed2 = 130;   // post sprint speed
 const int sec82SlowSideSpeed2 = -130;    // Post sprint correction speed
@@ -1134,6 +1179,10 @@ void setup()
     leftRightBias = 0;
     trackTurnTo = none;
 
+    turnStartThreshold = normalTurnStartThreshold;
+    turnEndThreshold = normalTurnEndThreshold;
+
+
     //
     // Read the button. If the button is pressed, set the mode to modeTest.
     // if not pressed, set the mode to modeStandby. The test mode puts the
@@ -1162,13 +1211,6 @@ void loop()
           read IR line sensors, digital version. This just reads the digital value
           from the sensor, which sets its threshold with a trim pot.
     */
-#ifndef ANALOGSENSING
-    lineSensorValLeft = digitalRead(digLineSensorPortLeft);
-    lineSensorValMiddle = digitalRead(digLineSensorPortMiddle);
-    lineSensorValRight = digitalRead(digLineSensorPortRight);
-#endif
-
-#ifdef ANALOGSENSING
     /*
           read IR line sensor, analog version. This reads the analog value of the
           sensor and compares it with the analog thresholds. There is a threshold
@@ -1237,7 +1279,6 @@ void loop()
         // no change. Keep the previous value. This is the hysteresis
         // dead zone.
     }
-#endif
 
     // resd ambient light sensor. Turn on headlights on at the low light threshold and off
     // at the high light threshold
@@ -1702,6 +1743,7 @@ void loop()
                 break;
 
             case 42:
+                turnStartThreshold = sec43TurnStartThreshold; //increase turn sensitivity for the next turn
                 ProcessStraightSection  //Straight section to tunnel approach turn (right). End at start of turn.
                 (
                     sec42FastSideSpeed1,
@@ -1714,14 +1756,20 @@ void loop()
                 break;
 
             case 43:
-                ProcessTurnSection  //wide right turn into tunnel. track turn until it ends
-                (
-                    sec43FastSideSpeed,
-                    sec43SlowSideSpeed,
-                    44,
-                    sec44SprintTime,
-                    sec44LeftRightBias
-                );
+                // Because this is a wide turn, detecting both its beginning and end with the gyro
+                // is not reliable. Because the turn ends in the tunnel, we just detect the darkness
+                // inside the tunnel, which is a little early, but should not be a problem.
+
+                fastSideSpeed = sec43FastSideSpeed;
+                slowSideSpeed = sec43SlowSideSpeed;
+                if (lightLevel < lightsOnThreshold)
+                {
+
+                    courseSection = 44;
+                    sprintTimer.Start(sec44SprintTime);
+                    leftRightBias = sec44LeftRightBias;
+                    turnStartThreshold = normalTurnStartThreshold; //return to normal turn sensitivity
+                }
                 break;
 
             case 44:
@@ -1754,11 +1802,14 @@ void loop()
                 break;
 
             case 51:
+                // set turn thresholds for the next turn
+                turnStartThreshold = sec52TurnStartThreshold;
+                turnEndThreshold = sec52TurnEndThreshold;
                 ProcessStraightSection  //Straight section from first crosswalk to right turn into the figure 8. Ends with beginning of turn
                 (
                     sec51FastSideSpeed1,
                     sec51SlowSideSpeed1,
-                    sec51SlowSideSpeed2,
+                    sec51FastSideSpeed2,
                     sec51SlowSideSpeed2,
                     52,
                     right
@@ -1774,6 +1825,9 @@ void loop()
                     sec53SprintTime,
                     sec53LeftRightBias
                 );
+                turnStartThreshold = normalTurnStartThreshold;
+                turnEndThreshold = normalTurnEndThreshold;
+
                 break;
 
             case 53:
@@ -1781,7 +1835,7 @@ void loop()
                 (
                     sec53FastSideSpeed1,
                     sec53SlowSideSpeed1,
-                    sec53SlowSideSpeed2,
+                    sec53FastSideSpeed2,
                     sec53SlowSideSpeed2,
                     54,
                     right
@@ -1832,7 +1886,7 @@ void loop()
                 (
                     sec61FastSideSpeed1,
                     sec61SlowSideSpeed1,
-                    sec61SlowSideSpeed2,
+                    sec61FastSideSpeed2,
                     sec61SlowSideSpeed2,
                     62,
                     left
@@ -1855,7 +1909,7 @@ void loop()
                 (
                     sec63FastSideSpeed1,
                     sec63SlowSideSpeed1,
-                    sec63SlowSideSpeed2,
+                    sec63FastSideSpeed2,
                     sec63SlowSideSpeed2,
                     64,
                     left
@@ -1878,7 +1932,7 @@ void loop()
                 (
                     sec65FastSideSpeed1,
                     sec65SlowSideSpeed1,
-                    sec65SlowSideSpeed2,
+                    sec65FastSideSpeed2,
                     sec65SlowSideSpeed2,
                     71,
                     right
@@ -1901,7 +1955,7 @@ void loop()
                 (
                     sec72FastSideSpeed1,
                     sec72SlowSideSpeed1,
-                    sec72SlowSideSpeed2,
+                    sec72FastSideSpeed2,
                     sec72SlowSideSpeed2,
                     73,
                     right
@@ -1920,11 +1974,14 @@ void loop()
                 break;
 
             case 74:
+                turnStartThreshold = sec81TurnStartThreshold;
+                turnEndThreshold = sec81TurnEndThreshold;
+
                 ProcessStraightSection  //Straight section to right turn onto banked section. Ends at right turn
                 (
                     sec74FastSideSpeed1,
                     sec74SlowSideSpeed1,
-                    sec74SlowSideSpeed2,
+                    sec74FastSideSpeed2,
                     sec74SlowSideSpeed2,
                     81,
                     right
@@ -1940,6 +1997,9 @@ void loop()
                     sec82SprintTime,
                     sec82LeftRightBias
                 );
+                turnStartThreshold = normalTurnStartThreshold;
+                turnEndThreshold = normalTurnEndThreshold;
+
                 break;
 
             case 82:
@@ -1947,7 +2007,7 @@ void loop()
                 (
                     sec82FastSideSpeed1,
                     sec82SlowSideSpeed1,
-                    sec82SlowSideSpeed2,
+                    sec82FastSideSpeed2,
                     sec82SlowSideSpeed2,
                     83,
                     right
@@ -1975,7 +2035,7 @@ void loop()
                 (
                     sec84FastSideSpeed1,
                     sec84SlowSideSpeed1,
-                    sec84SlowSideSpeed2,
+                    sec84FastSideSpeed2,
                     sec84SlowSideSpeed2,
                     85,
                     right               // this state should never end because the robot will go to
@@ -2304,26 +2364,34 @@ void loop()
 
         // sample the gyro every imuTimeStep milliseconds
         //
-        /*
-                if (imuGyroTimer.Test()) // check if timer has reached its limit
-                {
-                    //mpu6050 sensor events. We only care about the gyro, but the library only supports reading all of them.
-                    sensors_event_t accelerationsXYZ,  rotationRatesXYZ,  temperature;
-                    imu.getEvent  (&accelerationsXYZ, &rotationRatesXYZ, &temperature); // get the acceleration, rotation and temperature values
-                    static float cumulative = 0;
 
-                    float zRotationRate = rotationRatesXYZ.gyro.z - imuGyroZDrift;
-                    cumulative += zRotationRate;
+        //if (imuGyroTimer.Test()) // check if timer has reached its limit
+        {
+            //mpu6050 sensor events. We only care about the gyro, but the library only supports reading all of them.
+            sensors_event_t accelerationsXYZ,  rotationRatesXYZ,  temperature;
+            imu.getEvent  (&accelerationsXYZ, &rotationRatesXYZ, &temperature); // get the acceleration, rotation and temperature values
+            static float cumulative = 0;
 
-                    Serial.print(", Z: ");
-                    Serial.print(zRotationRate);
-                    Serial.print(" rad/s ");
-                    Serial.print("cumulative ");
-                    Serial.println(cumulative);
+            float xTilt = accelerationsXYZ.acceleration.x;
+            float yTilt = accelerationsXYZ.acceleration.y;
+            float zRotationRate = rotationRatesXYZ.gyro.z - imuGyroZDrift;
+            cumulative += zRotationRate;
+            //Y Tilt on banked section: >1,5 (.6 or so at starting line)
+            //X tilt on upramp >1.7 (~.7 at starting line)
+            //downramp <.5 at top <.8 at middle
+            Serial.print(", Z: ");
+            Serial.print(zRotationRate);
+            Serial.print(" rad/s ");
+            Serial.print("cumulative ");
+            Serial.print(cumulative);
+            Serial.print(" X tilt: ");
+            Serial.print(xTilt);
+            Serial.print(" Y tilt: ");
+            Serial.println(yTilt);
 
-                    imuGyroTimer.Start(imuTimeStep); // start timer with time step delay
-                }
-        */
+            // imuGyroTimer.Start(imuTimeStep); // start timer with time step delay
+        }
+
         /*
                 Test seven segment display. DisplayCount is called every cycle, but the
                 number to display is changed every second or so. Note DisplayCount has its
