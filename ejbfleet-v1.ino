@@ -174,32 +174,43 @@
     the up ramp to deal with the stalling issue, maybe with wiggle or a quick pivot to the right.
 
     Removed conditional compile for analog sensing. Removed digital sensing code.
-    
-    5/18/2001 Track testing...
+
+    5/18/2001 Track testing:
 
     New nimh batteries make the motors go faster and with more torque, so lots of adjustments of speeds
     and sprint delays. Added debug feature to preset course section and cross line counts so I can start
-    in different parts of the track. Slowed a lot of stuff down and will work back up at things get 
+    in different parts of the track. Slowed a lot of stuff down and will work back up at things get
     reliable.
-    
-    Eliminated track secions 53, 54 and 55, instead treating that whole
+
+    Eliminated track sections 53, 54 and 55, instead treating that whole
     part as an extension of 52 -- i.e. one big right turn. This section ends at the second crosswalk, so
-    no issue with having to quickly detect a no turn situation. 
+    no issue with having to quickly detect a no turn situation. It was working some of the time. Now it is
+    always working.
 
     Adjusted some turn detection thresholds, and make some turn constants (slow side speed) less agressive
     to reduce the serpentine stuff that causes premature turn end detection.
 
-    Problems at this point at the turn onto the banked section, turn 81. The section is advancing too 
-    quickly, so we get to 85 too soon, and the robot stops. Need to look at that code and test again to 
-    tune that turn. 
+    Problems at this point at the turn onto the banked section, turn 81. The section is advancing too
+    quickly, so we get to 85 too soon, and the robot stops. Need to look at that code and test again to
+    tune that turn.
 
-    Something going on with section 44. Never seems to get out of sprint.  Probablyl a coding error.
+    Something going on with section 44. Never seems to get out of sprint.  Probably a coding error.
 
-    Look for more opportunities to use somthing other than the gyro to detect turns ending. Now using the
+    Look for more opportunities to use something other than the gyro to detect turns ending. Now using the
     tunnel from 43 to 44, the crosswalk from 44 to 51, and the second crosswalk for 52 to 61.
 
-    Wiggling at some cross lines, certainly the ones in 65. Maybe turn off the sensors for some of that secion?
-    
+    Wiggling at some cross lines, certainly the ones in 65. Maybe turn off the sensors for some of that section?
+
+    5/18/2001 evening:
+
+    Fixed section 44 problem. I had *speed2 and *speed1 reversed in the case 44: section code.
+
+    added code for a timer to force inCorrection = none for a short time when a cross line is detected to
+    prevent the dreaded wiggle. Want to keep center sensor working for line count. Note also commented out
+    the correction code for hitting a cross line at an angle, because I'm not sure it was ever executed
+    because of where in the code it is. Now just testing for left and right are dark or center is dark and setting
+    the blanking delay at that point. 
+
 
 */
 //#define DEBUGTURNTRACK
@@ -252,10 +263,13 @@ const int thresholdMiddleLight = 600;
 
 //amount of time to look for second line of double line
 //after finding the first line.
-const int seekingSecondLineTimeWindow = 300;  // .3 second
+const int seekingSecondLineTimeWindow = 300;
 
 //delay after return from pause to run before seeking line again.
-const int seekFirstLineBlockTime = 500;  // Half second
+const int seekFirstLineBlockTime = 500;
+
+//line sensor blank time for skipForWiggle timer.
+const int skipForWiggleDelay = 100;
 
 // amount of time to stay in pause mode
 const int pauseModeDuration = 3000;  // 3 seconds
@@ -633,6 +647,10 @@ Timer turnTimer = Timer();
 
 // sprint timer. This is for setting times for sprints in the straight sections
 Timer sprintTimer = Timer();
+
+// skipForWiggleTimer. This is for blanking line sensing for a short time at a cross line to prevent
+// oscillation when crossing.
+Timer skipForWiggleTimer = Timer();
 
 // CleanEdge object for button. Initial button state unpressed.
 CleanEdge buttonReader = CleanEdge(buttonPort, buttonDebounceDelay, unpressed);
@@ -1815,13 +1833,13 @@ void loop()
                 // we have time to stop before running into the road.
                 if (sprintTimer.Test())
                 {
-                    fastSideSpeed = sec44FastSideSpeed1;
-                    slowSideSpeed = sec44SlowSideSpeed1;
+                    fastSideSpeed = sec44FastSideSpeed2;
+                    slowSideSpeed = sec44SlowSideSpeed2;
                 }
                 else
                 {
-                    fastSideSpeed = sec44FastSideSpeed2;
-                    slowSideSpeed = sec44SlowSideSpeed2;
+                    fastSideSpeed = sec44FastSideSpeed1;
+                    slowSideSpeed = sec44SlowSideSpeed1;
                 }
 
                 // This section ends at the end of the crosswalk pause, which we detect
@@ -1854,7 +1872,7 @@ void loop()
 
             case 52:
 
-               fastSideSpeed = sec52FastSideSpeed;
+                fastSideSpeed = sec52FastSideSpeed;
                 slowSideSpeed = sec52SlowSideSpeed;
                 if (finishingCrosswalk)
                 {
@@ -2161,7 +2179,7 @@ void loop()
 
                 - For cross lines, we have some special cases.
                     1. If all three sensors (left right, middle) are dark, we assume we are crossing
-                    the line. straight on. In this case, we do not correct.
+                    the line straight on. In this case, we do not correct.
                     2. If middle and right are dark, we assume we are hitting the cross line aiming left,
                     so we correct by turning right. We may want to adjust relative left and right speeds
                     if this overcorrects.
@@ -2169,11 +2187,16 @@ void loop()
                     so we correct by turning left. See caveat above.
         */
 
-        if (lineSensorValLeft == dark && lineSensorValRight == dark)
+        if (!skipForWiggleTimer.Test())
         {
-            // assumption is that if we see both sensors dark, then we are at a cross line and the
-            // robot is going straight.
             inCorrection = none;
+        }
+        else if ((lineSensorValLeft == dark && lineSensorValRight == dark) || lineSensorValMiddle == dark)
+        {
+            // assumption is that if we see both sensors dark, or the middle sensor dark, then we are at a cross line.
+            inCorrection = none;
+            // we set a timer to force no correction as we pass the line.
+            skipForWiggleTimer.Start(skipForWiggleDelay);
         }
         else if (lineSensorValLeft == dark && lineSensorValMiddle == light)
         {
@@ -2185,14 +2208,21 @@ void loop()
             // road edge detected. Turn toward the center of the road
             inCorrection = right;
         }
-        else if (lineSensorValRight == dark && lineSensorValMiddle == dark)
-        {
+        /*
+            Not sure this code ever executed
+            else if (lineSensorValRight == dark && lineSensorValMiddle == dark)
+            {
             // crossing line aimed left. correct as if left sensor detected the left road edge
             inCorrection = left;
-        }
-        else if (lineSensorValLeft == dark && lineSensorValMiddle == dark)
+            // This correction only happens once, then we force no correcton until we pass the line
+            skipForWiggleTimer.Start(skipForWiggleDelay);
+            }
+            else if (lineSensorValLeft == dark && lineSensorValMiddle == dark)
             // crossing line aimed right. Correct as if right sensor detected the right road edge
             inCorrection = right;
+            // This correction only happens once, then we force no correction until we pass the line
+            skipForWiggleTimer.Start(skipForWiggleDelay);
+        */
         else
         {
             inCorrection = none;

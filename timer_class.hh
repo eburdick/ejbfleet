@@ -10,7 +10,7 @@
     Timer myTimer = Timer();        //constructor, called outside of setup() or loop(). This is called for
                                     //each timer to be created.
 
-    void myTimer.Start();           //start timer with no specifed delay. Test will always return false.
+    void myTimer.Start();           //start timer with no specifed delay. Test will always return true.
     long myTimer.TimeSinceStart;    //find out how many milliseconds have passed since start.
     
     void myTimer.Start(long delay); //start timer with desired delay
