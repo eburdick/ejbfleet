@@ -269,7 +269,7 @@ const int seekingSecondLineTimeWindow = 300;
 const int seekFirstLineBlockTime = 500;
 
 //line sensor blank time for skipForWiggle timer.
-const int skipForWiggleDelay = 100;
+const int skipForWiggleDelay = 50;
 
 // amount of time to stay in pause mode
 const int pauseModeDuration = 3000;  // 3 seconds
@@ -296,12 +296,13 @@ const float normalTurnStartThreshold = 14.0;
 const float sec54TurnStartThreshold = 12.0;
 const float sec52TurnStartThreshold = 12.0;
 const float sec81TurnStartThreshold = 10.0;
+const float sec83TurnStartThreshold = 22.0;
 const float sec43TurnStartThreshold = 10.0;  // hard turn to detect. Make it more sensitive. Turn end
 // detected by tunnel entrance.
 const float normalTurnEndThreshold = 7.0;
 const float sec54TurnEndThreshold = 7.0;
 const float sec52TurnEndThreshold = 8.0;
-const float sec81TurnEndThreshold = 7.0;
+const float sec81TurnEndThreshold = 4.0;
 
 //Y acceleration threshold for banked section
 const float sec82YTiltThreshold = 1.5;
@@ -328,16 +329,16 @@ int courseSection; //state variable stores which section we are in. Initialized 
 // a straight run. After that time, we run with *FastSideSpeed2 and *SlowSideSpeed2 until an
 // event moves us to the next track subsection, which is either at a turn or at a crosswalk.
 // Too long a sprint time may cause a turn to be
-int initialCourseSection = 0; // for debugging starting later in the course
-int initialCrossLineCount = 0;
-int initialDoubleLineCount = 0;
+int initialCourseSection = 0;    //74; // for debugging starting later in the course
+int initialCrossLineCount = 0;   //12;
+int initialDoubleLineCount = 0;  //3;
 
 //first straight section. Sprint to just before the first turn.
 const int sec11FastSideSpeed1 = 240;
 const int sec11SlowSideSpeed1 = 50;    // gentle correction
 const int sec11FastSideSpeed2 = 130;   // post sprint speed
 const int sec11SlowSideSpeed2 = -200;    // Post sprint correction speed
-const int sec11SprintTime = 2000;     // duration of sprint time before starting turn
+const int sec11SprintTime = 2200;     // duration of sprint time before starting turn
 const int sec11LeftRightBias = 0;
 
 // first turn (right)
@@ -393,19 +394,19 @@ const int sec42FastSideSpeed1 = 200;  // short sprint after turn
 const int sec42SlowSideSpeed1 = 50;   // gentle correction
 const int sec42FastSideSpeed2 = 130;   // post sprint speed
 const int sec42SlowSideSpeed2 = -130;    // Post sprint correction speed
-const int sec42SprintTime = 300;
+const int sec42SprintTime = 600;
 const int sec42LeftRightBias = 0;
 
 //wide right turn into tunnel. track turn until it ends
 const int sec43FastSideSpeed = 220;  // tunnel approach curve right 180 degrees
-const int sec43SlowSideSpeed = 70;
+const int sec43SlowSideSpeed = 100;
 
 //straight section to crosswalk
-const int sec44FastSideSpeed1 = 130;  // short sprint to first crosswalk
-const int sec44SlowSideSpeed1 = 20;   // gentle correction
+const int sec44FastSideSpeed1 = 220;  // short sprint to first crosswalk
+const int sec44SlowSideSpeed1 = 100;   // gentle correction
 const int sec44FastSideSpeed2 = 130;   // post sprint speed
 const int sec44SlowSideSpeed2 = -130;    // Post sprint correction speed
-const int sec44SprintTime = 200;
+const int sec44SprintTime = 2000;
 const int sec44LeftRightBias = 0;
 
 //Straight section from first crosswalk to right turn into the figure 8. Ends with beginning of turn
@@ -419,7 +420,7 @@ const int sec51LeftRightBias = 0;
 //Right turn toward figure 8. Track the turn until it ends.
 const int sec52FastSideSpeed = 130;  // first turn right 90 degrees
 const int sec52SlowSideSpeed = -100;
-
+/*
 //Short straight section before a right dogleg. Ends when the dogleg starts.
 const int sec53FastSideSpeed1 = 130;   // sprint speed
 const int sec53SlowSideSpeed1 = 0;    // sprint correction speed
@@ -439,21 +440,21 @@ const int sec55FastSideSpeed2 = 100;   // post sprint speed
 const int sec55SlowSideSpeed2 = -100;    // Post sprint correction speed
 const int sec55SprintTime = 50;
 const int sec55LeftRightBias = 0;
-
-// courseSection 6 constants (bottom of figure 8 to second dogleg, passing three cross lines)
-const int sec61FastSideSpeed1 = 100;  // sprint to first turn
+*/
+// Straight section to first left turn in bottom of figure 8
+const int sec61FastSideSpeed1 = 220;  // sprint to first turn
 const int sec61SlowSideSpeed1 = 50;   // gentle correction
 const int sec61FastSideSpeed2 = 100;   // post sprint speed
-const int sec61SlowSideSpeed2 = -150;    // Post sprint correction speed
-const int sec61SprintTime = 100;
+const int sec61SlowSideSpeed2 = -200;    // Post sprint correction speed
+const int sec61SprintTime = 200;
 const int sec61LeftRightBias = 0;
 
 // first turn at bottom of fig 8 left 120 degrees
-const int sec62FastSideSpeed = 100;
-const int sec62SlowSideSpeed = -100;
+const int sec62FastSideSpeed = 130;
+const int sec62SlowSideSpeed = -130;
 
 //Straight section at the bottom of the figure 8. Ends at left turn out of figure 8
-const int sec63FastSideSpeed1 = 100;  // sprint to second turn
+const int sec63FastSideSpeed1 = 220;  // sprint to second turn
 const int sec63SlowSideSpeed1 = 50;   // gentle correction
 const int sec63FastSideSpeed2 = 100;   // post sprint speed
 const int sec63SlowSideSpeed2 = -100;    // Post sprint correction speed
@@ -461,14 +462,14 @@ const int sec63SprintTime = 200;
 const int sec63LeftRightBias = 0;
 
 //Left turn toward the figure 8 crossing point. Track the turn until it ends.
-const int sec64FastSideSpeed = 100;  // second turn at bottom of fig 8 left 160 degrees
-const int sec64SlowSideSpeed = -50;
+const int sec64FastSideSpeed = 130;  // second turn at bottom of fig 8 left 160 degrees
+const int sec64SlowSideSpeed = -130;
 
 //Straight section coming out of the bottom of the figure 8. Ends with dogleg right turn.
-const int sec65FastSideSpeed1 = 100;  // sprint to dogleg
-const int sec65SlowSideSpeed1 = 50;   // gentle correction
+const int sec65FastSideSpeed1 = 220;  // sprint to dogleg
+const int sec65SlowSideSpeed1 = 100;   // gentle correction
 const int sec65FastSideSpeed2 = 100;   // post sprint speed
-const int sec65SlowSideSpeed2 = -180;    // Post sprint correction speed
+const int sec65SlowSideSpeed2 = -220;    // Post sprint correction speed
 const int sec65SprintTime = 500;
 const int sec65LeftRightBias = 0;
 
@@ -494,21 +495,21 @@ const int sec73SlowSideSpeed = -130;
 //Straight section to right turn onto banked section. Ends at right turn
 const int sec74FastSideSpeed1 = 200;  // sprint to 90 degree right onto banked section
 const int sec74SlowSideSpeed1 = 50;   // gentle correction
-const int sec74FastSideSpeed2 = 130;   // post sprint speed
-const int sec74SlowSideSpeed2 = -130;    // Post sprint correction speed
+const int sec74FastSideSpeed2 = 150;   // post sprint speed
+const int sec74SlowSideSpeed2 = -100;    // Post sprint correction speed
 const int sec74SprintTime = 500;
 const int sec74LeftRightBias = 0;
 
 //Right turn to banked section. Ends when turn ends.
-const int sec81FastSideSpeed = 130;  // turning onto banked section
-const int sec81SlowSideSpeed = -130;
+const int sec81FastSideSpeed = 150;  // turning onto banked section
+const int sec81SlowSideSpeed = -80;
 
 //Straight banked section to right turn to home stretch section.
 const int sec82FastSideSpeed1 = 240;  // sprint on banked section
 const int sec82SlowSideSpeed1 = 50;   // gentle correction
 const int sec82FastSideSpeed2 = 130;   // post sprint speed
 const int sec82SlowSideSpeed2 = -130;    // Post sprint correction speed
-const int sec82SprintTime = 1000;    // long section
+const int sec82SprintTime = 2000;    // long section
 const int sec82LeftRightBias = 0;
 
 //Right turn to home stretch. Ends when turn ends.
@@ -2064,10 +2065,12 @@ void loop()
                     81,
                     right
                 );
+                /*
                 if (courseSection == 81)
                 {
                     sprintTimer.Start(3000);
                 }
+                */
                 break;
 
             case 81:
@@ -2104,7 +2107,7 @@ void loop()
                 break;
 
             case 82:
-                turnStartThreshold = normalTurnStartThreshold; //return to normal turn sensitivity
+                turnStartThreshold = sec83TurnStartThreshold; //return to normal turn sensitivity
                 turnEndThreshold = normalTurnEndThreshold;
 
                 ProcessStraightSection  //Straight banked section to right turn to home stretch section. Ends at right turn
