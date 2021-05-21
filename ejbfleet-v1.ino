@@ -211,13 +211,10 @@
     because of where in the code it is. Now just testing for left and right are dark or center is dark and setting
     the blanking delay at that point. 
 
-    May 20: no real change. Trying to debug github desk.
-    no real change. Testing Git Gui
-    updated ejbdesk repository with fetch followed by merge (pull) now pushing this back
-    added ssh key to ejbdesk and github. Adding this line to test. Didn't work because I didn't tell git about it.
-       git remote set-url origin git@github.com:eburdick/ejbfleet.git
-    Updated ssh key on ejbyoga to have no passphrase. Just way more security than I need.
-
+    5/20 Snapshot to capture changes in constants for the sections. Before this, I make some comment changes to 
+    get my git stuff going with different gui programs. Ended up going with the basic git gui because the others
+    were having problems with authentication using ssl. Also tried rolling back about 5 commits, and it just skips
+    them, so they are still there. 
 
 */
 //#define DEBUGTURNTRACK
