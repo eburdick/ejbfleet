@@ -211,7 +211,8 @@
     because of where in the code it is. Now just testing for left and right are dark or center is dark and setting
     the blanking delay at that point. 
 
-    May 20: no real change. Trying to debug github desk
+    May 20: no real change. Trying to debug github desk.
+    no real change. Testing Git Gui
 
 
 */
