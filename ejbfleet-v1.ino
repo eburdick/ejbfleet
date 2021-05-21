@@ -216,6 +216,7 @@
     updated ejbdesk repository with fetch followed by merge (pull) now pushing this back
     added ssh key to ejbdesk and github. Adding this line to test. Didn't work because I didn't tell git about it.
        git remote set-url origin git@github.com:eburdick/ejbfleet.git
+    Updated ssh key on ejbyoga to have no passphrase. Just way more security than I need.
 
 
 */
