@@ -213,6 +213,7 @@
 
     May 20: no real change. Trying to debug github desk.
     no real change. Testing Git Gui
+    updated ejbdesk repository with fetch followed by merge (pull) now pushing this back
 
 
 */
