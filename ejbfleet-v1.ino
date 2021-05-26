@@ -209,12 +209,35 @@
     prevent the dreaded wiggle. Want to keep center sensor working for line count. Note also commented out
     the correction code for hitting a cross line at an angle, because I'm not sure it was ever executed
     because of where in the code it is. Now just testing for left and right are dark or center is dark and setting
-    the blanking delay at that point. 
+    the blanking delay at that point.
 
-    5/20 Snapshot to capture changes in constants for the sections. Before this, I make some comment changes to 
+    5/20 Snapshot to capture changes in constants for the sections. Before this, I make some comment changes to
     get my git stuff going with different gui programs. Ended up going with the basic git gui because the others
     were having problems with authentication using ssl. Also tried rolling back about 5 commits, and it just skips
-    them, so they are still there. 
+    them, so they are still there.
+
+    5/25/2001 evening:
+
+    Time on track yesterday between Preksha's runs. Stuff that used to work stopped working. Need to start 
+    tuning over again, and maybe reduce the number of track sections. Candidates: 
+      --12,13,14,15 could become one section. 15 is a lazy turn, but short, and tuning opportunity is minimal.
+      This would start with the right turn, maybe just at the end of the section 11 sprint and end with the
+      first right turn after a left turn. Maybe combine 12, 13, and 14 and keep 15, so we can just detect the left
+      right transtion from 15 to 21.
+
+     --41, 42 and 43 maybe, but I like the 43 fast turn. Think more about that.
+
+     --Maybe treat both of the left turns in the figure 8 as one turn, ending at the first cross line right after
+     the curve. Easy to detect. We already combine the two turns after the first crosswalk and terminate at
+     the second crosswalk. That works well. Maybe end the sprint after the second crosswalk at the second cross 
+     line after that, so the whole bottom part of the figure 8 becomes one big left loop with no gyro based turn
+     detection needed.
+
+     --probably no others, because I want to keep the last four sprints. One opportunity might be to use the 
+     cross lines just outside of the tunnel to start turn 73. That leaves the turns at the beginning and end of the
+     banked secion, which are hard, but sensing the bank with both the Y and Z accelerometers might work. With only
+     Y, that has not been working, but not quite time to give up on that.
+     detect
 
 */
 //#define DEBUGTURNTRACK
@@ -290,23 +313,23 @@ const int displayRefreshPeriod = 13;
 // decision on whether to advance the section counter. This should be happening several
 // times a second. The longer this period, the better smoothing we will have to avoid
 // local minima. Too long will make the section boundaries too inaccurate.
-const int turnSampleInterval = 300;
+const int turnSampleInterval = 400;
 
 // turn thresholds are the total value of the sum of rotation values we count per time slot to
 // define entering and exiting a turn. This number will go up with the size of the time interval.
 float turnStartThreshold;
 float turnEndThreshold;
-const float normalTurnStartThreshold = 14.0;
-const float sec54TurnStartThreshold = 12.0;
-const float sec52TurnStartThreshold = 12.0;
-const float sec81TurnStartThreshold = 10.0;
-const float sec83TurnStartThreshold = 22.0;
-const float sec43TurnStartThreshold = 10.0;  // hard turn to detect. Make it more sensitive. Turn end
+const float normalTurnStartThreshold = 21.0;
+const float sec54TurnStartThreshold = 16.0;
+const float sec52TurnStartThreshold = 16.0;
+const float sec81TurnStartThreshold = 13.0;
+const float sec83TurnStartThreshold = 30.0;
+const float sec43TurnStartThreshold = 13.0;  // hard turn to detect. Make it more sensitive. Turn end
 // detected by tunnel entrance.
-const float normalTurnEndThreshold = 7.0;
-const float sec54TurnEndThreshold = 7.0;
-const float sec52TurnEndThreshold = 8.0;
-const float sec81TurnEndThreshold = 4.0;
+const float normalTurnEndThreshold = 10.0;
+const float sec54TurnEndThreshold = 10.0;
+const float sec52TurnEndThreshold = 11.0;
+const float sec81TurnEndThreshold = 5.0;
 
 //Y acceleration threshold for banked section
 const float sec82YTiltThreshold = 1.5;
@@ -339,22 +362,22 @@ int initialDoubleLineCount = 0;  //3;
 
 //first straight section. Sprint to just before the first turn.
 const int sec11FastSideSpeed1 = 240;
-const int sec11SlowSideSpeed1 = 50;    // gentle correction
-const int sec11FastSideSpeed2 = 130;   // post sprint speed
+const int sec11SlowSideSpeed1 = 140;    // gentle correction
+const int sec11FastSideSpeed2 = 100;   // post sprint speed
 const int sec11SlowSideSpeed2 = -200;    // Post sprint correction speed
-const int sec11SprintTime = 2200;     // duration of sprint time before starting turn
+const int sec11SprintTime = 2100;     // duration of sprint time before starting turn
 const int sec11LeftRightBias = 0;
 
 // first turn (right)
-const int sec12FastSideSpeed = 130;   // fast side speed for first turn right 60 degrees
-const int sec12SlowSideSpeed = -50;  // slow side speed for first turn
+const int sec12FastSideSpeed = 100;   // fast side speed for first turn right 60 degrees
+const int sec12SlowSideSpeed = -100;  // slow side speed for first turn
 
 // straight section
-const int sec13FastSideSpeed1  = 200;  // speed for short sprint between right turns
-const int sec13SlowSideSpeed1 = 50;    // gentle correction
+const int sec13FastSideSpeed1  = 130;  // speed for short sprint between right turns
+const int sec13SlowSideSpeed1 = -130;    // gentle correction
 const int sec13FastSideSpeed2 = 130;   // post sprint speed
 const int sec13SlowSideSpeed2 = -200;    // Post sprint correction speed
-const int sec13SprintTime = 300;      // duration of sprint before second turn
+const int sec13SprintTime = 200;      // duration of sprint before second turn
 const int sec13LeftRightBias = 0;
 
 // second turn (right)
@@ -363,18 +386,18 @@ const int sec14SlowSideSpeed = -50;  // slow side speed for gentle turns
 
 // third turn (left)
 const int sec15FastSideSpeed = 130;   // fast side speed for third turn left 80 degrees
-const int sec15SlowSideSpeed = -100;  // slow side speed for third turn
+const int sec15SlowSideSpeed = -130;  // slow side speed for third turn
 
 // courseSection 2 constants (turn onto ramp to turn at the top of the ramp)
-const int sec21FastSideSpeed = 130;   // fast side speed for turn onto ramp right 140 degrees
-const int sec21SlowSideSpeed = -50;  // slow side speed for turn onto ramp
+const int sec21FastSideSpeed = 100;   // fast side speed for turn onto ramp right 140 degrees
+const int sec21SlowSideSpeed = -130;  // slow side speed for turn onto ramp
 
 //straight section to turn at top of ramp. End at start of turn.
-const int sec22FastSideSpeed1 = 240;   // speed up the ramp
+const int sec22FastSideSpeed1 = 200;   // speed up the ramp
 const int sec22SlowSideSpeed1 = 50;    // gentle correction
 const int sec22FastSideSpeed2 = 130;   // post sprint speed
 const int sec22SlowSideSpeed2 = -130;    // Post sprint correction speed
-const int sec22SprintTime = 2000;      // duration of sprint time before ramp turn
+const int sec22SprintTime = 1500;      // duration of sprint time before ramp turn
 const int sec22LeftRightBias = 0;     // stay to right to avoid premature right turn
 
 // courseSection 3 contants (turn onto down ramp to turn onto tunnel approach)
@@ -425,25 +448,25 @@ const int sec51LeftRightBias = 0;
 const int sec52FastSideSpeed = 130;  // first turn right 90 degrees
 const int sec52SlowSideSpeed = -100;
 /*
-//Short straight section before a right dogleg. Ends when the dogleg starts.
-const int sec53FastSideSpeed1 = 130;   // sprint speed
-const int sec53SlowSideSpeed1 = 0;    // sprint correction speed
-const int sec53FastSideSpeed2 = 100;   // post sprint speed
-const int sec53SlowSideSpeed2 = -100;    // Post sprint correction speed
-const int sec53SprintTime = 100;
-const int sec53LeftRightBias = 0;
+    //Short straight section before a right dogleg. Ends when the dogleg starts.
+    const int sec53FastSideSpeed1 = 130;   // sprint speed
+    const int sec53SlowSideSpeed1 = 0;    // sprint correction speed
+    const int sec53FastSideSpeed2 = 100;   // post sprint speed
+    const int sec53SlowSideSpeed2 = -100;    // Post sprint correction speed
+    const int sec53SprintTime = 100;
+    const int sec53LeftRightBias = 0;
 
-//Right dogleg in figure 8. Ends when turn finishes.
-const int sec54FastSideSpeed = 100;  // dogleg right 45 degrees
-const int sec54SlowSideSpeed = -100;
+    //Right dogleg in figure 8. Ends when turn finishes.
+    const int sec54FastSideSpeed = 100;  // dogleg right 45 degrees
+    const int sec54SlowSideSpeed = -100;
 
-//Straight section before second crosswalk
-const int sec55FastSideSpeed1 = 100;  // sprint to first turn
-const int sec55SlowSideSpeed1 = -100;   // gentle correction
-const int sec55FastSideSpeed2 = 100;   // post sprint speed
-const int sec55SlowSideSpeed2 = -100;    // Post sprint correction speed
-const int sec55SprintTime = 50;
-const int sec55LeftRightBias = 0;
+    //Straight section before second crosswalk
+    const int sec55FastSideSpeed1 = 100;  // sprint to first turn
+    const int sec55SlowSideSpeed1 = -100;   // gentle correction
+    const int sec55FastSideSpeed2 = 100;   // post sprint speed
+    const int sec55SlowSideSpeed2 = -100;    // Post sprint correction speed
+    const int sec55SprintTime = 50;
+    const int sec55LeftRightBias = 0;
 */
 // Straight section to first left turn in bottom of figure 8
 const int sec61FastSideSpeed1 = 220;  // sprint to first turn
@@ -1240,7 +1263,6 @@ void setup()
 
     turnStartThreshold = normalTurnStartThreshold;
     turnEndThreshold = normalTurnEndThreshold;
-
 
     //
     // Read the button. If the button is pressed, set the mode to modeTest.
@@ -2070,10 +2092,10 @@ void loop()
                     right
                 );
                 /*
-                if (courseSection == 81)
-                {
+                    if (courseSection == 81)
+                    {
                     sprintTimer.Start(3000);
-                }
+                    }
                 */
                 break;
 
@@ -2423,58 +2445,58 @@ void loop()
                 that there has been a change since the last read and report both values when there is.
         */
         char stringBuffer[80];  // character array to assemble formatted strings using sprintf()
+
+        // For line sensor calibration
+        // Check each line sensor digital state and report changes to the serial terminal along with the
+        // analog values.
+        if (0)//(prevLineSensorValLeft != lineSensorValLeft)
+        {
+            // report both the left and the right sensor data
+            sprintf(stringBuffer, "L Sensor %d -> %d Analog %d", prevLineSensorValLeft, lineSensorValLeft, analogSensorValLeft);
+            Serial.println(stringBuffer);
+            sprintf(stringBuffer, "R Sensor        %d Analog %d", lineSensorValRight, analogSensorValRight);
+            Serial.println(stringBuffer);
+            prevLineSensorValLeft = lineSensorValLeft;
+        }
+
+        if (0)//(prevLineSensorValMiddle != lineSensorValMiddle)
+        {
+            sprintf(stringBuffer, "M Sensor %d -> %d Analog %d", prevLineSensorValMiddle, lineSensorValMiddle, analogSensorValMiddle);
+            Serial.println(stringBuffer);
+            prevLineSensorValMiddle = lineSensorValMiddle;
+        }
+        delay (200);
+        if (1)//(prevLineSensorValRight != lineSensorValRight)
+        {
+            // report both the left and the right sensor data
+            sprintf(stringBuffer, "R Sensor %d -> %d Analog %d", prevLineSensorValRight, lineSensorValRight, analogSensorValRight);
+            Serial.println(stringBuffer);
+            prevLineSensorValRight = lineSensorValRight;
+            sprintf(stringBuffer, "L Sensor        %d Analog %d", lineSensorValLeft, analogSensorValLeft);
+            Serial.println(stringBuffer);
+        }
         /*
-                    // For line sensor calibration
-                    // Check each line sensor digital state and report changes to the serial terminal along with the
-                    // analog values.
-                    if (prevLineSensorValLeft != lineSensorValLeft)
-                    {
-                        // report both the left and the right sensor data
-                        sprintf(stringBuffer, "L Sensor %d -> %d Analog %d", prevLineSensorValLeft, lineSensorValLeft, analogSensorValLeft);
-                        Serial.println(stringBuffer);
-                        sprintf(stringBuffer, "R Sensor        %d Analog %d", lineSensorValRight, analogSensorValRight);
-                        Serial.println(stringBuffer);
-                        prevLineSensorValLeft = lineSensorValLeft;
-                    }
-
-                    if (prevLineSensorValMiddle != lineSensorValMiddle)
-                    {
-                        sprintf(stringBuffer, "M Sensor %d -> %d Analog %d", prevLineSensorValMiddle, lineSensorValMiddle, analogSensorValMiddle);
-                        Serial.println(stringBuffer);
-                        prevLineSensorValMiddle = lineSensorValMiddle;
-                    }
-
-                    if (prevLineSensorValRight != lineSensorValRight)
-                    {
-                        // report both the left and the right sensor data
-                        sprintf(stringBuffer, "R Sensor %d -> %d Analog %d", prevLineSensorValRight, lineSensorValRight, analogSensorValRight);
-                        Serial.println(stringBuffer);
-                        prevLineSensorValRight = lineSensorValRight;
-                        sprintf(stringBuffer, "L Sensor        %d Analog %d", lineSensorValLeft, analogSensorValLeft);
-                        Serial.println(stringBuffer);
-                    }
-
-                    if (rtcTestTimer.Test())
-                    {
-                        rtcTestTimer.Start(5000); // set timer to 5 seconds
-                        char daysOfTheWeek[7][12] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
-                        //Serial.println("Real Time Clock check...");
-                        DateTime now = realTimeClock.now();
-                        Serial.print(now.year(), DEC);
-                        Serial.print('/');
-                        Serial.print(now.month(), DEC);
-                        Serial.print('/');
-                        Serial.print(now.day(), DEC);
-                        Serial.print(" (");
-                        Serial.print(daysOfTheWeek[now.dayOfTheWeek()]);
-                        Serial.print(") ");
-                        Serial.print(now.hour(), DEC);
-                        Serial.print(':');
-                        Serial.print(now.minute(), DEC);
-                        Serial.print(':');
-                        Serial.print(now.second(), DEC);
-                        Serial.println();
-                }
+               if (rtcTestTimer.Test())
+               {
+                   rtcTestTimer.Start(5000); // set timer to 5 seconds
+                   char daysOfTheWeek[7][12] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
+                   //Serial.println("Real Time Clock check...");
+                   DateTime now = realTimeClock.now();
+                   Serial.print(now.year(), DEC);
+                   Serial.print('/');
+                   Serial.print(now.month(), DEC);
+                   Serial.print('/');
+                   Serial.print(now.day(), DEC);
+                   Serial.print(" (");
+                   Serial.print(daysOfTheWeek[now.dayOfTheWeek()]);
+                   Serial.print(") ");
+                   Serial.print(now.hour(), DEC);
+                   Serial.print(':');
+                   Serial.print(now.minute(), DEC);
+                   Serial.print(':');
+                   Serial.print(now.second(), DEC);
+                   Serial.println();
+            }
         */
         /*
                 Gyro test code. We sample the gyro every timeStep seconds. The value we sample is
@@ -2484,12 +2506,12 @@ void loop()
                 displacement. This will drift over time due to cumulative rounding error, but we
                 will try it out and see how well it works.
         */
+        /*
+            // sample the gyro every imuTimeStep milliseconds
+            //
 
-        // sample the gyro every imuTimeStep milliseconds
-        //
-
-        //if (imuGyroTimer.Test()) // check if timer has reached its limit
-        {
+            //if (imuGyroTimer.Test()) // check if timer has reached its limit
+            {
             //mpu6050 sensor events. We only care about the gyro, but the library only supports reading all of them.
             sensors_event_t accelerationsXYZ,  rotationRatesXYZ,  temperature;
             imu.getEvent  (&accelerationsXYZ, &rotationRatesXYZ, &temperature); // get the acceleration, rotation and temperature values
@@ -2513,9 +2535,9 @@ void loop()
             Serial.println(yTilt);
 
             // imuGyroTimer.Start(imuTimeStep); // start timer with time step delay
-        }
+            }
 
-        /*
+            /*
                 Test seven segment display. DisplayCount is called every cycle, but the
                 number to display is changed every second or so. Note DisplayCount has its
                 own timer for its refresh rate, so a lot of times when it is called, it does
