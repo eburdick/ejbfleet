@@ -218,8 +218,8 @@
 
     5/25/2001 evening:
 
-    Time on track yesterday between Preksha's runs. Stuff that used to work stopped working. Need to start 
-    tuning over again, and maybe reduce the number of track sections. Candidates: 
+    Time on track yesterday between Preksha's runs. Stuff that used to work stopped working. Need to start
+    tuning over again, and maybe reduce the number of track sections. Candidates:
       --12,13,14,15 could become one section. 15 is a lazy turn, but short, and tuning opportunity is minimal.
       This would start with the right turn, maybe just at the end of the section 11 sprint and end with the
       first right turn after a left turn. Maybe combine 12, 13, and 14 and keep 15, so we can just detect the left
@@ -229,15 +229,34 @@
 
      --Maybe treat both of the left turns in the figure 8 as one turn, ending at the first cross line right after
      the curve. Easy to detect. We already combine the two turns after the first crosswalk and terminate at
-     the second crosswalk. That works well. Maybe end the sprint after the second crosswalk at the second cross 
+     the second crosswalk. That works well. Maybe end the sprint after the second crosswalk at the second cross
      line after that, so the whole bottom part of the figure 8 becomes one big left loop with no gyro based turn
      detection needed.
 
-     --probably no others, because I want to keep the last four sprints. One opportunity might be to use the 
+     --probably no others, because I want to keep the last four sprints. One opportunity might be to use the
      cross lines just outside of the tunnel to start turn 73. That leaves the turns at the beginning and end of the
      banked secion, which are hard, but sensing the bank with both the Y and Z accelerometers might work. With only
      Y, that has not been working, but not quite time to give up on that.
      detect
+
+     5/28/2021 Track testing. Some progress made...
+
+     -- With the new batteries, things were just going too fast. Changed all of the 130, -130 speeds to 100, -150 
+     because a lot of the turns that used to work just stopped working. That was mostly successful. Also shortened
+     the sprints. Tuning still to do, but close to being back to completing the course.
+
+     -- non of the course tracking changes mentioned in the previous checkin, but still want to do at least some
+     of them.
+
+     -- added a timer to extend the tough initial turns (straight to really sharp turn) because we were overrunning
+     some of these. This is invoked by setting turnDelay to aome number of milliseconds in strategic course 
+     locations. Tested on the first turn, and it works, but also overcorrects during the sprint. Need to make it
+     not happen during sprints. Same issue at section 61, the first left turn in the figure 8, and 65, the dogleg
+     after the figure crossing point. Filtering out the sprint period should work. Also want to have flag to 
+     specify whether to put the delay in left or right, because it oscillates. Tuning the delay and the sprint
+     time should work well.
+     
+     -- missing the 14 to 15 transition at times, and coming out of 21 at a bad angle on occasion. Need to tweak that
 
 */
 //#define DEBUGTURNTRACK
@@ -367,54 +386,55 @@ const int sec11FastSideSpeed2 = 100;   // post sprint speed
 const int sec11SlowSideSpeed2 = -200;    // Post sprint correction speed
 const int sec11SprintTime = 2100;     // duration of sprint time before starting turn
 const int sec11LeftRightBias = 0;
+const int sec11TurnDelay = 200;
 
 // first turn (right)
 const int sec12FastSideSpeed = 100;   // fast side speed for first turn right 60 degrees
-const int sec12SlowSideSpeed = -100;  // slow side speed for first turn
+const int sec12SlowSideSpeed = -150;  // slow side speed for first turn
 
 // straight section
 const int sec13FastSideSpeed1  = 130;  // speed for short sprint between right turns
 const int sec13SlowSideSpeed1 = -130;    // gentle correction
-const int sec13FastSideSpeed2 = 130;   // post sprint speed
-const int sec13SlowSideSpeed2 = -200;    // Post sprint correction speed
-const int sec13SprintTime = 200;      // duration of sprint before second turn
+const int sec13FastSideSpeed2 = 100;   // post sprint speed
+const int sec13SlowSideSpeed2 = -150;    // Post sprint correction speed
+const int sec13SprintTime = 50;      // duration of sprint before second turn
 const int sec13LeftRightBias = 0;
 
 // second turn (right)
-const int sec14FastSideSpeed = 130;   // fast side speed for second turn right 80 degrees
-const int sec14SlowSideSpeed = -50;  // slow side speed for gentle turns
+const int sec14FastSideSpeed = 100;   // fast side speed for second turn right 80 degrees
+const int sec14SlowSideSpeed = -150;  // slow side speed for gentle turns
 
 // third turn (left)
-const int sec15FastSideSpeed = 130;   // fast side speed for third turn left 80 degrees
-const int sec15SlowSideSpeed = -130;  // slow side speed for third turn
+const int sec15FastSideSpeed = 100;   // fast side speed for third turn left 80 degrees
+const int sec15SlowSideSpeed = -150;  // slow side speed for third turn
 
 // courseSection 2 constants (turn onto ramp to turn at the top of the ramp)
 const int sec21FastSideSpeed = 100;   // fast side speed for turn onto ramp right 140 degrees
-const int sec21SlowSideSpeed = -130;  // slow side speed for turn onto ramp
+const int sec21SlowSideSpeed = -150;  // slow side speed for turn onto ramp
 
 //straight section to turn at top of ramp. End at start of turn.
 const int sec22FastSideSpeed1 = 200;   // speed up the ramp
 const int sec22SlowSideSpeed1 = 50;    // gentle correction
-const int sec22FastSideSpeed2 = 130;   // post sprint speed
-const int sec22SlowSideSpeed2 = -130;    // Post sprint correction speed
+const int sec22FastSideSpeed2 = 100;   // post sprint speed
+const int sec22SlowSideSpeed2 = -150;    // Post sprint correction speed
 const int sec22SprintTime = 1500;      // duration of sprint time before ramp turn
 const int sec22LeftRightBias = 0;     // stay to right to avoid premature right turn
 
 // courseSection 3 contants (turn onto down ramp to turn onto tunnel approach)
-const int sec31FastSideSpeed = 130;  // turn at top of ramp right 90 degrees
-const int sec31SlowSideSpeed = -130;
+const int sec31FastSideSpeed = 100;  // turn at top of ramp right 90 degrees
+const int sec31SlowSideSpeed = -150;
 
 //straight section to turn at bottom of ramp. End at start of turn.
 const int sec32FastSideSpeed1 = 200;  // speed down the ramp
 const int sec32SlowSideSpeed1 = 50;    // gentle correction
-const int sec32FastSideSpeed2 = 130;   // post sprint speed
-const int sec32SlowSideSpeed2 = -130;    // Post sprint correction speed
+const int sec32FastSideSpeed2 = 100;   // post sprint speed
+const int sec32SlowSideSpeed2 = -150;    // Post sprint correction speed
 const int sec32SprintTime = 1000;     // duration of sprint time before turn at bottom
 const int sec32LeftRightBias = 0;    // stay to right to avoid premature right turn
 
 // courseSection 4 constants (turn onto tunnel approach, through tunnel to first crosswalk
-const int sec41FastSideSpeed = 130;  // first turn at bottom of ramp right 90 degrees
-const int sec41SlowSideSpeed = -130;
+const int sec41FastSideSpeed = 100;  // first turn at bottom of ramp right 90 degrees
+const int sec41SlowSideSpeed = -150;
 
 //Straight section to tunnel approach turn (right). End at start of turn.
 const int sec42FastSideSpeed1 = 200;  // short sprint after turn
@@ -425,29 +445,32 @@ const int sec42SprintTime = 600;
 const int sec42LeftRightBias = 0;
 
 //wide right turn into tunnel. track turn until it ends
-const int sec43FastSideSpeed = 220;  // tunnel approach curve right 180 degrees
-const int sec43SlowSideSpeed = 100;
+const int sec43FastSideSpeed = 200;  // tunnel approach curve right 180 degrees
+const int sec43SlowSideSpeed = 50;
 
 //straight section to crosswalk
-const int sec44FastSideSpeed1 = 220;  // short sprint to first crosswalk
-const int sec44SlowSideSpeed1 = 100;   // gentle correction
-const int sec44FastSideSpeed2 = 130;   // post sprint speed
-const int sec44SlowSideSpeed2 = -130;    // Post sprint correction speed
-const int sec44SprintTime = 2000;
+const int sec44FastSideSpeed1 = 180;  // short sprint to first crosswalk
+const int sec44SlowSideSpeed1 = 50;   // gentle correction
+const int sec44FastSideSpeed2 = 100;   // post sprint speed
+const int sec44SlowSideSpeed2 = -150;    // Post sprint correction speed
+const int sec44SprintTime = 1000;
 const int sec44LeftRightBias = 0;
 
 //Straight section from first crosswalk to right turn into the figure 8. Ends with beginning of turn
 const int sec51FastSideSpeed1 = 200;  // short sprint to turn
 const int sec51SlowSideSpeed1 = 50;   // gentle correction
-const int sec51FastSideSpeed2 = 130;   // post sprint speed
-const int sec51SlowSideSpeed2 = -130;    // Post sprint correction speed
-const int sec51SprintTime = 200;
+const int sec51FastSideSpeed2 = 100;   // post sprint speed
+const int sec51SlowSideSpeed2 = -150;    // Post sprint correction speed
+const int sec51SprintTime = 100;
 const int sec51LeftRightBias = 0;
 
 //Right turn toward figure 8. Track the turn until it ends.
-const int sec52FastSideSpeed = 130;  // first turn right 90 degrees
-const int sec52SlowSideSpeed = -100;
+const int sec52FastSideSpeed = 100;  // first turn right 90 degrees
+const int sec52SlowSideSpeed = -150;
 /*
+    Commented out. Treat first turn, short straight secion, second turn, strsight to
+    second crosswalk as one turn.
+
     //Short straight section before a right dogleg. Ends when the dogleg starts.
     const int sec53FastSideSpeed1 = 130;   // sprint speed
     const int sec53SlowSideSpeed1 = 0;    // sprint correction speed
@@ -473,75 +496,77 @@ const int sec61FastSideSpeed1 = 220;  // sprint to first turn
 const int sec61SlowSideSpeed1 = 50;   // gentle correction
 const int sec61FastSideSpeed2 = 100;   // post sprint speed
 const int sec61SlowSideSpeed2 = -200;    // Post sprint correction speed
-const int sec61SprintTime = 200;
+const int sec61SprintTime = 100;
 const int sec61LeftRightBias = 0;
+const int sec61TurnDelay = 150;
 
 // first turn at bottom of fig 8 left 120 degrees
-const int sec62FastSideSpeed = 130;
-const int sec62SlowSideSpeed = -130;
+const int sec62FastSideSpeed = 100;
+const int sec62SlowSideSpeed = -150;
 
 //Straight section at the bottom of the figure 8. Ends at left turn out of figure 8
 const int sec63FastSideSpeed1 = 220;  // sprint to second turn
 const int sec63SlowSideSpeed1 = 50;   // gentle correction
 const int sec63FastSideSpeed2 = 100;   // post sprint speed
-const int sec63SlowSideSpeed2 = -100;    // Post sprint correction speed
-const int sec63SprintTime = 200;
+const int sec63SlowSideSpeed2 = -150;    // Post sprint correction speed
+const int sec63SprintTime = 100;
 const int sec63LeftRightBias = 0;
 
 //Left turn toward the figure 8 crossing point. Track the turn until it ends.
-const int sec64FastSideSpeed = 130;  // second turn at bottom of fig 8 left 160 degrees
-const int sec64SlowSideSpeed = -130;
+const int sec64FastSideSpeed = 100;  // second turn at bottom of fig 8 left 160 degrees
+const int sec64SlowSideSpeed = -150;
 
 //Straight section coming out of the bottom of the figure 8. Ends with dogleg right turn.
 const int sec65FastSideSpeed1 = 220;  // sprint to dogleg
 const int sec65SlowSideSpeed1 = 100;   // gentle correction
 const int sec65FastSideSpeed2 = 100;   // post sprint speed
 const int sec65SlowSideSpeed2 = -220;    // Post sprint correction speed
-const int sec65SprintTime = 500;
+const int sec65SprintTime = 200;
 const int sec65LeftRightBias = 0;
+const int sec65TurnDelay = 200;
 
 // courseSection 7 constants (detecting dogleg and turning right, passing two cross lines, then 90 degree right,
 // straight sprint up to turn onto banked section
 
 //Right dogleg turn after crossing center of figure 8 . Ends when turn ends.
 const int sec71FastSideSpeed = 100;   // turning at dogleg
-const int sec71SlowSideSpeed = -100;  // agressive turn
+const int sec71SlowSideSpeed = -150;  // agressive turn
 
 //Straight section exiting the figure 8, ending right turn
 const int sec72FastSideSpeed1 = 200;   // sprint to 90 degree right
 const int sec72SlowSideSpeed1 = 50;    // gentle correction
-const int sec72FastSideSpeed2 = 130;   // post sprint speed
-const int sec72SlowSideSpeed2 = -130;    // Post sprint correction speed
+const int sec72FastSideSpeed2 = 100;   // post sprint speed
+const int sec72SlowSideSpeed2 = -150;    // Post sprint correction speed
 const int sec72SprintTime = 1000;
 const int sec72LeftRightBias = 0;
 
 //Right turn to horizontal section at top of field. Ends when turn ends.
-const int sec73FastSideSpeed = 130;  // 90 degree right turn to straight section along course top edge
-const int sec73SlowSideSpeed = -130;
+const int sec73FastSideSpeed = 100;  // 90 degree right turn to straight section along course top edge
+const int sec73SlowSideSpeed = -150;
 
 //Straight section to right turn onto banked section. Ends at right turn
 const int sec74FastSideSpeed1 = 200;  // sprint to 90 degree right onto banked section
 const int sec74SlowSideSpeed1 = 50;   // gentle correction
-const int sec74FastSideSpeed2 = 150;   // post sprint speed
-const int sec74SlowSideSpeed2 = -100;    // Post sprint correction speed
-const int sec74SprintTime = 500;
+const int sec74FastSideSpeed2 = 100;   // post sprint speed
+const int sec74SlowSideSpeed2 = -150;    // Post sprint correction speed
+const int sec74SprintTime = 300;
 const int sec74LeftRightBias = 0;
 
 //Right turn to banked section. Ends when turn ends.
-const int sec81FastSideSpeed = 150;  // turning onto banked section
-const int sec81SlowSideSpeed = -80;
+const int sec81FastSideSpeed = 100;  // turning onto banked section
+const int sec81SlowSideSpeed = -150;
 
 //Straight banked section to right turn to home stretch section.
 const int sec82FastSideSpeed1 = 240;  // sprint on banked section
 const int sec82SlowSideSpeed1 = 50;   // gentle correction
-const int sec82FastSideSpeed2 = 130;   // post sprint speed
-const int sec82SlowSideSpeed2 = -130;    // Post sprint correction speed
-const int sec82SprintTime = 2000;    // long section
+const int sec82FastSideSpeed2 = 100;   // post sprint speed
+const int sec82SlowSideSpeed2 = -150;    // Post sprint correction speed
+const int sec82SprintTime = 1500;    // long section
 const int sec82LeftRightBias = 0;
 
 //Right turn to home stretch. Ends when turn ends.
-const int sec83FastSideSpeed = 130;  // final turn
-const int sec83SlowSideSpeed = -130;
+const int sec83FastSideSpeed = 100;  // final turn
+const int sec83SlowSideSpeed = -150;
 
 //Straight section to finish line.
 const int sec84FastSideSpeed1 = 200;  // sprint to finish line
@@ -680,6 +705,10 @@ Timer sprintTimer = Timer();
 // oscillation when crossing.
 Timer skipForWiggleTimer = Timer();
 
+// sharp turn timer. This is for situations where we need a little more time to correct when the robot
+// overruns a line it approaches at a sharp angle. We use it only in problem areas.
+Timer sharpTurnTimer = Timer();
+
 // CleanEdge object for button. Initial button state unpressed.
 CleanEdge buttonReader = CleanEdge(buttonPort, buttonDebounceDelay, unpressed);
 
@@ -725,8 +754,12 @@ int leftRightBias;
 //motor speeds for line following. Negative is reverse, and fastSideSpeed is the
 //straight drive speed of the robot. These are assigned from the motor speeds
 //in the course section sequencing code.
-int slowSideSpeed = -130;  // fixed slow side speed for turning out of line error.
-int fastSideSpeed = 130;   // fixed high side speed for turning out of line error.
+int slowSideSpeed = -150;  // fixed slow side speed for turning out of line error.
+int fastSideSpeed = 100;   // fixed high side speed for turning out of line error.
+
+//turn delay. This is used to make a line look wider by extending a light to dark transition. Normally
+//it is zero, but we set it just before some of the more diffucult straight to turn places in the track.
+int turnDelay;
 
 // state constants for cross line processing
 const int seekingFirstLine = 0;
@@ -1264,6 +1297,7 @@ void setup()
     turnStartThreshold = normalTurnStartThreshold;
     turnEndThreshold = normalTurnEndThreshold;
 
+    turnDelay = 0;
     //
     // Read the button. If the button is pressed, set the mode to modeTest.
     // if not pressed, set the mode to modeStandby. The test mode puts the
@@ -1316,21 +1350,35 @@ void loop()
           is effectively the only threshold, because if the dark threshold
           test fails, the light threshold will always succeed.
     */
-    // left sensor code
-    if (analogSensorValLeft > thresholdLeftDark)
+    // left sensor code. First, check if the sharp turn timer is active. If so, just leave the
+    // sensor at its old value. Otherwise check the sensor value against the thresholds
+    // to set the state.
+    if (sharpTurnTimer.Test())
     {
-        lineSensorValLeft = dark;
+        if (analogSensorValLeft > thresholdLeftDark)
+        {
+            lineSensorValLeft = dark;
+            // test the turnDelay value. If it is greater than zero, start the sharp turn timer.
+            // The delay will have been set by straight section code to extend a first turn correction.
+            // Once the timer is started, the right and left sensors will not be read until the 
+            // timer expires. Once we test the turnDelay value and start the timer, we reset it to 
+            // zero so this code just gets executed once.
+            if (turnDelay > 0)
+            {
+                sharpTurnTimer.Start(turnDelay);
+                turnDelay = 0; // Consume the flag for one time operation
+            }
+        }
+        else if (analogSensorValLeft <= thresholdLeftLight)
+        {
+            lineSensorValLeft = light;
+        }
+        else
+        {
+            // no change. Keep the previous value. This is the hysteresis
+            // dead zone.
+        }
     }
-    else if (analogSensorValLeft <= thresholdLeftLight)
-    {
-        lineSensorValLeft = light;
-    }
-    else
-    {
-        // no change. Keep the previous value. This is the hysteresis
-        // dead zone.
-    }
-
     // middle sensor code
     if (analogSensorValMiddle > thresholdMiddleDark)
     {
@@ -1346,21 +1394,36 @@ void loop()
         // dead zone.
     }
 
-    // right sensor code
-    if (analogSensorValRight > thresholdRightDark)
+    // right sensor code. First, check if the line timer is active. If so, just leave the
+    // sensor at its old value. Otherwise check the sensor value against the thresholds
+    // to set the state.
+    if (sharpTurnTimer.Test())
     {
-        lineSensorValRight = dark;
-    }
-    else if (analogSensorValRight <= thresholdRightLight)
-    {
-        lineSensorValRight = light;
-    }
-    else
-    {
-        // no change. Keep the previous value. This is the hysteresis
-        // dead zone.
-    }
+        if (analogSensorValRight > thresholdRightDark)
+        {
+            lineSensorValRight = dark;
+            // test the turnDelay value. If it is greater than zero, start the sharp turn timer.
+            // The delay will have been set by straight section code to extend a first turn correction.
+            // Once the timer is started, the right and left sensors will not be read until the 
+            // timer expires. Once we test the turnDelay value and start the timer, we reset it to 
+            // zero so this code just gets executed once.
 
+            if (turnDelay > 0)
+            {
+                sharpTurnTimer.Start(turnDelay);
+                turnDelay = 0; // Consume the flag for one time operation
+            }
+        }
+        else if (analogSensorValRight <= thresholdRightLight)
+        {
+            lineSensorValRight = light;
+        }
+        else
+        {
+            // no change. Keep the previous value. This is the hysteresis
+            // dead zone.
+        }
+    }
     // resd ambient light sensor. Turn on headlights on at the low light threshold and off
     // at the high light threshold
 
@@ -1702,6 +1765,7 @@ void loop()
                     12,
                     right
                 );
+                turnDelay = sec11TurnDelay;
                 break;
 
             case 12:
@@ -1996,6 +2060,7 @@ void loop()
                     62,
                     left
                 );
+                turnDelay = sec61TurnDelay;
                 break;
 
             case 62:
@@ -2042,6 +2107,7 @@ void loop()
                     71,
                     right
                 );
+                turnDelay = sec65TurnDelay;
                 break;
 
             case 71:
