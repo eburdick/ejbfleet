@@ -241,7 +241,7 @@
 
      5/28/2021 Track testing. Some progress made...
 
-     -- With the new batteries, things were just going too fast. Changed all of the 130, -130 speeds to 100, -150 
+     -- With the new batteries, things were just going too fast. Changed all of the 130, -130 speeds to 100, -150
      because a lot of the turns that used to work just stopped working. That was mostly successful. Also shortened
      the sprints. Tuning still to do, but close to being back to completing the course.
 
@@ -249,16 +249,36 @@
      of them.
 
      -- added a timer to extend the tough initial turns (straight to really sharp turn) because we were overrunning
-     some of these. This is invoked by setting turnDelay to aome number of milliseconds in strategic course 
+     some of these. This is invoked by setting turnDelay to some number of milliseconds in strategic course
      locations. Tested on the first turn, and it works, but also overcorrects during the sprint. Need to make it
      not happen during sprints. Same issue at section 61, the first left turn in the figure 8, and 65, the dogleg
-     after the figure crossing point. Filtering out the sprint period should work. Also want to have flag to 
+     after the figure crossing point. Filtering out the sprint period should work. Also want to have flag to
      specify whether to put the delay in left or right, because it oscillates. Tuning the delay and the sprint
      time should work well.
-     
+
      -- missing the 14 to 15 transition at times, and coming out of 21 at a bad angle on occasion. Need to tweak that
 
+     5/29/2021
+
+     Moved turn delay code into ProcessStraightSection function. Also replaced turnDelay with leftSensorDelay 
+     and rightSensorDelay and set them only after the sprint. This avoids the overcorrection oscillation
+     during sprints and narrows the delay to only the target sensor for the expected turn, reducing the probability
+     of major wandering where there are a lot of lines. It may make sense to allow this delay only once per section,
+     because it is only for the initial turn, but there will be cases where there is a correction before that turn,
+     right after the sprint, so I will leave it for now.
+
+     Added conditional compilation for sections of the test mode code to replace block comments. Also removed some 
+     old debug print statements that were not controlled by conditional compilation.
 */
+
+//conditional compilation flags for test mode. Note test stuff only happens when the button
+//is held down during startup
+//#define TEST7SEGDISPLAY
+//#define TESTIMU
+//#define TESTREALTIMECLOCK
+//#define TESTLINESENSORS
+
+//conditional compilation flags for debug code
 //#define DEBUGTURNTRACK
 //#define DEBUGTURNSENSE
 
@@ -270,9 +290,11 @@
 #include <SD.h>      // SD card library
 #include <SPI.h>     // Serial Peripheral Interface library
 #include <RTClib.h>  // Real Time Clock library
-#include "blinkled_class.hh"    //support code for blinking LEDs
-#include "timer_class.hh"       //support code for non-blocking timers
-#include "clean_edge_class.hh"  //support code for edge cleaned physical sensor reads (button, line sensor)
+
+// class definition header files. Member function cpp files are separately compiled
+#include "blinkled_class.hh"    //header file for support code for blinking LED class
+#include "timer_class.hh"       //header file for non-blocking timer class
+#include "clean_edge_class.hh"  //header file for edge cleaned physical sensor reads (button, line sensor)
 
 
 /*
@@ -759,7 +781,8 @@ int fastSideSpeed = 100;   // fixed high side speed for turning out of line erro
 
 //turn delay. This is used to make a line look wider by extending a light to dark transition. Normally
 //it is zero, but we set it just before some of the more diffucult straight to turn places in the track.
-int turnDelay;
+int leftSensorDelay;
+int rightSensorDelay;
 
 // state constants for cross line processing
 const int seekingFirstLine = 0;
@@ -836,11 +859,16 @@ unsigned long imuTimeStep = 10;  //timeStep for sample timer in milliseconds
     course section, which is always a turn. It is mostly to make the course section sequencing code
     more compact, and only works for straight track sections that end with a turn. The sequence is...
 
-    start the curve tracking code looking for a turn in the direction of the next curve.
-
     The assumption is that the sprint timer has already been started during the track section transition.
     test the sprint timer. If it has not expired, run at sprint speed, otherwise run at post
     sprint speed.
+
+    Start the curve tracking code looking for a turn in the direction of the next curve. Optionally, set
+    a delay for the line sensor corresponding to the anticipated turn. This delay makes the dark sense
+    time artificially longer to guard against overruns at abrupt turns. It is only set after the sprint
+    so we don't get overcorrections during the sprint time. Note the global variables leftSensorDelay and
+    rightSensorDelay are always set to zero when the delay timer is started in the sensor code.
+
 */
 void ProcessStraightSection
 (
@@ -849,7 +877,8 @@ void ProcessStraightSection
     int postSprintFastSideSpeed,
     int postSprintSlowSideSpeed,
     int nextSection,
-    int nextSectionTurn
+    int nextSectionTurn,
+    int turnCompletionDelay
 )
 {
 
@@ -858,10 +887,12 @@ void ProcessStraightSection
     if (nextSectionTurn == right)
     {
         turnTrackState = waitingForRightTurn;
+        leftSensorDelay = turnCompletionDelay;
     }
-    else
+    else //nextSectionTurn == left
     {
         turnTrackState = waitingForLeftTurn;
+        rightSensorDelay = turnCompletionDelay;
     }
 
     // run at sprint speed during the sprint time. This should end before the next track section just
@@ -870,6 +901,14 @@ void ProcessStraightSection
     {
         fastSideSpeed = postSprintFastSideSpeed;
         slowSideSpeed = postSprintSlowSideSpeed;
+        if (nextSectionTurn == right)
+        {
+            leftSensorDelay = turnCompletionDelay;
+        }
+        else //nextSectionTurn == left
+        {
+            rightSensorDelay = turnCompletionDelay;
+        }
     }
     else
     {
@@ -1297,7 +1336,8 @@ void setup()
     turnStartThreshold = normalTurnStartThreshold;
     turnEndThreshold = normalTurnEndThreshold;
 
-    turnDelay = 0;
+    leftSensorDelay = 0;
+    rightSensorDelay = 0;
     //
     // Read the button. If the button is pressed, set the mode to modeTest.
     // if not pressed, set the mode to modeStandby. The test mode puts the
@@ -1312,7 +1352,7 @@ void setup()
     {
         ModeStartToStandby();
     }
-}
+} // end of setup()
 /*                                         _   _   _
                                        |  / \ / \ |_) /  \
                                        |_ \_/ \_/ |   \  /
@@ -1358,15 +1398,15 @@ void loop()
         if (analogSensorValLeft > thresholdLeftDark)
         {
             lineSensorValLeft = dark;
-            // test the turnDelay value. If it is greater than zero, start the sharp turn timer.
+            // test the leftSensorDelay value. If it is greater than zero, start the sharp turn timer.
             // The delay will have been set by straight section code to extend a first turn correction.
-            // Once the timer is started, the right and left sensors will not be read until the 
-            // timer expires. Once we test the turnDelay value and start the timer, we reset it to 
+            // Once the timer is started, the right and left sensors will not be read until the
+            // timer expires. Once we test the leftSensorDelay value and start the timer, we reset it to
             // zero so this code just gets executed once.
-            if (turnDelay > 0)
+            if (leftSensorDelay > 0)
             {
-                sharpTurnTimer.Start(turnDelay);
-                turnDelay = 0; // Consume the flag for one time operation
+                sharpTurnTimer.Start(leftSensorDelay);
+                leftSensorDelay = 0; // Consume the flag for one time operation
             }
         }
         else if (analogSensorValLeft <= thresholdLeftLight)
@@ -1402,16 +1442,16 @@ void loop()
         if (analogSensorValRight > thresholdRightDark)
         {
             lineSensorValRight = dark;
-            // test the turnDelay value. If it is greater than zero, start the sharp turn timer.
+            // test the rightSensorDelay value. If it is greater than zero, start the sharp turn timer.
             // The delay will have been set by straight section code to extend a first turn correction.
-            // Once the timer is started, the right and left sensors will not be read until the 
-            // timer expires. Once we test the turnDelay value and start the timer, we reset it to 
+            // Once the timer is started, the right and left sensors will not be read until the
+            // timer expires. Once we test the rightSensorDelay value and start the timer, we reset it to
             // zero so this code just gets executed once.
 
-            if (turnDelay > 0)
+            if (rightSensorDelay > 0)
             {
-                sharpTurnTimer.Start(turnDelay);
-                turnDelay = 0; // Consume the flag for one time operation
+                sharpTurnTimer.Start(rightSensorDelay);
+                rightSensorDelay = 0; // Consume the flag for one time operation
             }
         }
         else if (analogSensorValRight <= thresholdRightLight)
@@ -1588,7 +1628,6 @@ void loop()
         {
             if (turnTimer.Test())
             {
-                //Serial.println(rotationAccum);
 
 #ifdef DEBUGTURNTRACK
                 if (prevTurnTrackState != turnTrackState)
@@ -1628,8 +1667,7 @@ void loop()
         {
             if (turnTimer.Test())
             {
-                //Serial.println(rotationAccum);
-
+              
 #ifdef DEBUGTURNTRACK
                 if (prevTurnTrackState != turnTrackState)
                 {
@@ -1763,9 +1801,9 @@ void loop()
                     sec11FastSideSpeed2,
                     sec11SlowSideSpeed2,
                     12,
-                    right
+                    right,
+                    sec11TurnDelay
                 );
-                turnDelay = sec11TurnDelay;
                 break;
 
             case 12:
@@ -1787,7 +1825,8 @@ void loop()
                     sec13FastSideSpeed2,
                     sec13SlowSideSpeed2,
                     14,
-                    right
+                    right,
+                    0
                 );
                 break;
 
@@ -1850,7 +1889,8 @@ void loop()
                     sec22FastSideSpeed2,
                     sec22SlowSideSpeed2,
                     31,
-                    right
+                    right,
+                    0
                 );
                 break;
 
@@ -1873,7 +1913,8 @@ void loop()
                     sec32FastSideSpeed2,
                     sec32SlowSideSpeed2,
                     41,
-                    right
+                    right,
+                    0
                 );
                 break;
 
@@ -1897,7 +1938,8 @@ void loop()
                     sec42FastSideSpeed2,
                     sec42SlowSideSpeed2,
                     43,
-                    right
+                    right,
+                    0
                 );
                 break;
 
@@ -1957,7 +1999,8 @@ void loop()
                     sec51FastSideSpeed2,
                     sec51SlowSideSpeed2,
                     52,
-                    right
+                    right,
+                    0
                 );
                 break;
 
@@ -2002,7 +2045,8 @@ void loop()
                     sec53FastSideSpeed2,
                     sec53SlowSideSpeed2,
                     54,
-                    right
+                    right,
+                    0
                 );
                 break;
 
@@ -2058,9 +2102,9 @@ void loop()
                     sec61FastSideSpeed2,
                     sec61SlowSideSpeed2,
                     62,
-                    left
+                    left,
+                    sec61TurnDelay
                 );
-                turnDelay = sec61TurnDelay;
                 break;
 
             case 62:
@@ -2082,7 +2126,8 @@ void loop()
                     sec63FastSideSpeed2,
                     sec63SlowSideSpeed2,
                     64,
-                    left
+                    left,
+                    0
                 );
                 break;
 
@@ -2105,9 +2150,9 @@ void loop()
                     sec65FastSideSpeed2,
                     sec65SlowSideSpeed2,
                     71,
-                    right
+                    right,
+                    sec65TurnDelay
                 );
-                turnDelay = sec65TurnDelay;
                 break;
 
             case 71:
@@ -2129,7 +2174,8 @@ void loop()
                     sec72FastSideSpeed2,
                     sec72SlowSideSpeed2,
                     73,
-                    right
+                    right,
+                    0
                 );
                 break;
 
@@ -2155,7 +2201,8 @@ void loop()
                     sec74FastSideSpeed2,
                     sec74SlowSideSpeed2,
                     81,
-                    right
+                    right,
+                    0
                 );
                 /*
                     if (courseSection == 81)
@@ -2209,7 +2256,8 @@ void loop()
                     sec82FastSideSpeed2,
                     sec82SlowSideSpeed2,
                     83,
-                    right
+                    right,
+                    0
                 );
                 break;
 
@@ -2237,7 +2285,9 @@ void loop()
                     sec84FastSideSpeed2,
                     sec84SlowSideSpeed2,
                     85,
-                    right               // this state should never end because the robot will go to
+                    right,
+                    0
+                    // this state should never end because the robot will go to
                     // standby mode first, but if that fails to happen, we will
                     // detect the first turn after the start/end line and stop in
                     // section 85, below.
@@ -2303,7 +2353,7 @@ void loop()
             // road edge detected. Turn toward the center of the road
             inCorrection = right;
         }
-        /*
+        /*s
             Not sure this code ever executed
             else if (lineSensorValRight == dark && lineSensorValMiddle == dark)
             {
@@ -2503,6 +2553,8 @@ void loop()
         //
         // code for test mode
         //
+        
+#ifdef TESTLINESENSORS
         /*
                 Code for finding analog thresholds of line sensors. The hardware thresholds on the sensors are
                 adjusted via trimpots on the boards. This code watches each sensor's digital output and when it sees
@@ -2541,7 +2593,9 @@ void loop()
             sprintf(stringBuffer, "L Sensor        %d Analog %d", lineSensorValLeft, analogSensorValLeft);
             Serial.println(stringBuffer);
         }
-        /*
+#endif
+
+#ifdef TESTREALTIMECLOCK
                if (rtcTestTimer.Test())
                {
                    rtcTestTimer.Start(5000); // set timer to 5 seconds
@@ -2563,16 +2617,18 @@ void loop()
                    Serial.print(now.second(), DEC);
                    Serial.println();
             }
-        */
+#endif
+
+#ifdef TESTIMU
         /*
-                Gyro test code. We sample the gyro every timeStep seconds. The value we sample is
+                IMU test code. We sample the gyro every timeStep seconds. The value we sample is
                 an angular rate. We multiply that by the timeStep to turn the rate into an angle
                 change, and add that to an accumulating value, which starts out at zero. Roughly
                 speaking, we are integrating the angular velocity over time to yield an angular
                 displacement. This will drift over time due to cumulative rounding error, but we
                 will try it out and see how well it works.
         */
-        /*
+        
             // sample the gyro every imuTimeStep milliseconds
             //
 
@@ -2602,14 +2658,16 @@ void loop()
 
             // imuGyroTimer.Start(imuTimeStep); // start timer with time step delay
             }
+#endif
 
+#ifdef TEST7SEGDISPLAY
             /*
                 Test seven segment display. DisplayCount is called every cycle, but the
                 number to display is changed every second or so. Note DisplayCount has its
                 own timer for its refresh rate, so a lot of times when it is called, it does
                 nothing but maintain the current display state.
         */
-        /*
+        
             static int count = 0;
             DisplayCount(count);
             if (testTimer.Test())
@@ -2617,8 +2675,10 @@ void loop()
                 testTimer.Start(1000);
                 count++;
             }
-        */
-    }  // end of test
+        
+#endif
+
+    }  // end of test mode code
     /*                         __ ___           _    _              _   _   _    _  _   _   _
                               (_   |  /\  |\ | | \  |_) \_/   |\/| / \ | \ |_   /  / \ | \ |_
                               __)  | /--\ | \| |_/  |_)  |    |  | \_/ |_/ |_   \_ \_/ |_/ |_
