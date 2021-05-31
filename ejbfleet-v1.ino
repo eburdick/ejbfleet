@@ -269,6 +269,13 @@
 
      Added conditional compilation for sections of the test mode code to replace block comments. Also removed some 
      old debug print statements that were not controlled by conditional compilation.
+
+     5/30/2021
+
+     Bench testing to make sure the new stuff works. I does seem to work. Removed redundant code from 
+     processStraightSection. Bench tested leftRightBias code, which has seemed to act up in the past, but seems
+     to work ok. Not using it at this point, but it is there if we need it. Keep in mind that adding one
+     to this value adds two to the difference between left and right motor drive.
 */
 
 //conditional compilation flags for test mode. Note test stuff only happens when the button
@@ -408,7 +415,7 @@ const int sec11FastSideSpeed2 = 100;   // post sprint speed
 const int sec11SlowSideSpeed2 = -200;    // Post sprint correction speed
 const int sec11SprintTime = 2100;     // duration of sprint time before starting turn
 const int sec11LeftRightBias = 0;
-const int sec11TurnDelay = 200;
+const int sec11TurnDelay = 50;
 
 // first turn (right)
 const int sec12FastSideSpeed = 100;   // fast side speed for first turn right 60 degrees
@@ -857,7 +864,7 @@ unsigned long imuTimeStep = 10;  //timeStep for sample timer in milliseconds
 /*
     this function sets up a timed sprint followed by a (usually) slower speed leading up the the next
     course section, which is always a turn. It is mostly to make the course section sequencing code
-    more compact, and only works for straight track sections that end with a turn. The sequence is...
+    more compact, and only works for straight track sections that end with a turn.
 
     The assumption is that the sprint timer has already been started during the track section transition.
     test the sprint timer. If it has not expired, run at sprint speed, otherwise run at post
@@ -883,24 +890,28 @@ void ProcessStraightSection
 {
 
     // Since we are in a straight section, there will only be small corrections leading up to
-    // the turn in the next section, so we start looking for the turn here.
+    // the turn in the next section, so we start looking for the turn here. Note if the turn 
+    // threshold is set too small, a turn could be prematurely detected.
     if (nextSectionTurn == right)
     {
         turnTrackState = waitingForRightTurn;
-        leftSensorDelay = turnCompletionDelay;
     }
     else //nextSectionTurn == left
     {
         turnTrackState = waitingForLeftTurn;
-        rightSensorDelay = turnCompletionDelay;
     }
 
     // run at sprint speed during the sprint time. This should end before the next track section just
     // to avoid going too fast to start the turn.
     if (sprintTimer.Test())
     {
+        // Past sprint window
         fastSideSpeed = postSprintFastSideSpeed;
         slowSideSpeed = postSprintSlowSideSpeed;
+
+        // set the left or right sensor delay. This is to extend the correction that leads us into the 
+        // turn following this straight section. Most of the time, this delay will be zero, but for
+        // tougher turns, we add some delay
         if (nextSectionTurn == right)
         {
             leftSensorDelay = turnCompletionDelay;
@@ -912,14 +923,22 @@ void ProcessStraightSection
     }
     else
     {
+        // Still in sprint window. No sensor delay here because as long as we set the spring time right,
+        // we will never be entering a turn during this period, and adding a delay would cause us to 
+        // zig-zag across the straight section.
         fastSideSpeed = sprintFastSideSpeed;
         slowSideSpeed = sprintSlowSideSpeed;
     }
+
+    // Test if the gyro has detected the anticipated turn. This turn will start at the end of this straight
+    // section. When the turn is detected, we move on the the code for the next course section.
     if (inTurn == nextSectionTurn)
     {
         courseSection = nextSection;
     }
 }
+//********************** End of ProcessStraightSection()
+
 /*
     This function processes a track section that is a turn. It will be called after a waitingForRightTurn
     or waitingForLeftTurn has transitioned to tracking a turn, which is the event that put us into this
@@ -946,7 +965,7 @@ void ProcessTurnSection
         leftRightBias = nextSectionLeftRightBias;
     }
 }
-
+//*********************End of ProcessTurnSection()
 
 /*
     Display a number between 0 and 99 or 0xFF on the two digit seven segment display. This function is
@@ -1390,22 +1409,25 @@ void loop()
           is effectively the only threshold, because if the dark threshold
           test fails, the light threshold will always succeed.
     */
-    // left sensor code. First, check if the sharp turn timer is active. If so, just leave the
+    // left sensor code. First, check if the sharp turn timer is counting down. If so, just leave the
     // sensor at its old value. Otherwise check the sensor value against the thresholds
     // to set the state.
     if (sharpTurnTimer.Test())
     {
+        // We are not in a turn delay, so we test whether the sensor is dark. If so, then we test for
+        // a designated delay on this sensor. If a delay has been specified, we start the shortTurnTimer,
+        // which will prevent this block of code for running again until the timer expires.
         if (analogSensorValLeft > thresholdLeftDark)
         {
             lineSensorValLeft = dark;
             // test the leftSensorDelay value. If it is greater than zero, start the sharp turn timer.
             // The delay will have been set by straight section code to extend a first turn correction.
-            // Once the timer is started, the right and left sensors will not be read until the
+            // Once the timer is started, the left sensor will not be read until the
             // timer expires. Once we test the leftSensorDelay value and start the timer, we reset it to
             // zero so this code just gets executed once.
             if (leftSensorDelay > 0)
             {
-                sharpTurnTimer.Start(leftSensorDelay);
+                sharpTurnTimer.Start(leftSensorDelay);      
                 leftSensorDelay = 0; // Consume the flag for one time operation
             }
         }
@@ -2393,8 +2415,12 @@ void loop()
             // just go straight
             SetSpeedRight(fastSideSpeed);
             SetSpeedLeft(fastSideSpeed);
+           
         }
-
+            Serial.print(LFMotorSpeed);
+            Serial.print(" ");
+            Serial.println(RFMotorSpeed);
+ 
         /*
                 ****************************Line counting and crosswalk detection***************************
 
