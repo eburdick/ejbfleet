@@ -260,19 +260,19 @@
 
      5/29/2021
 
-     Moved turn delay code into ProcessStraightSection function. Also replaced turnDelay with leftSensorDelay 
+     Moved turn delay code into ProcessStraightSection function. Also replaced turnDelay with leftSensorDelay
      and rightSensorDelay and set them only after the sprint. This avoids the overcorrection oscillation
      during sprints and narrows the delay to only the target sensor for the expected turn, reducing the probability
      of major wandering where there are a lot of lines. It may make sense to allow this delay only once per section,
      because it is only for the initial turn, but there will be cases where there is a correction before that turn,
      right after the sprint, so I will leave it for now.
 
-     Added conditional compilation for sections of the test mode code to replace block comments. Also removed some 
+     Added conditional compilation for sections of the test mode code to replace block comments. Also removed some
      old debug print statements that were not controlled by conditional compilation.
 
      5/30/2021
 
-     Bench testing to make sure the new stuff works. I does seem to work. Removed redundant code from 
+     Bench testing to make sure the new stuff works. I does seem to work. Removed redundant code from
      processStraightSection. Bench tested leftRightBias code, which has seemed to act up in the past, but seems
      to work ok. Not using it at this point, but it is there if we need it. Keep in mind that adding one
      to this value adds two to the difference between left and right motor drive.
@@ -281,7 +281,7 @@
 
      Track testing. The changes seem to work, so lots of tuning. Overruns at 11, failure to detect 15, false
      detection of a line at the top of the ramp, overrun at 41 and too fast at 42, lots of wiggle after the
-     second crosswalk, overrun at 65, false advances after that. Fixed everything up to the bottom of the 
+     second crosswalk, overrun at 65, false advances after that. Fixed everything up to the bottom of the
      figure 8, but still not really reliable. I want to redo the section advances as follows...
 
      combine the bottom of the figure 8 stuff into one long left turn, because advances don't always work
@@ -293,6 +293,12 @@
      Do somthing about turn 81 at the beginning of the banked section. Maybe write some code to use two axes
      for detection the bank before we advance to 82. This part really does not work well. Also, we are overrunning
      that turn and finishing outside of the lines.
+
+     6/3/2021
+
+     Implemented changes described above.
+
+
 */
 
 //conditional compilation flags for test mode. Note test stuff only happens when the button
@@ -401,7 +407,7 @@ const float sec81TurnStartThreshold = 13.0;
 const float sec83TurnStartThreshold = 30.0;
 const float sec43TurnStartThreshold = 13.0;  // hard turn to detect. Make it more sensitive. Turn end
 // detected by tunnel entrance.
-const float normalTurnEndThreshold = 10.0; 
+const float normalTurnEndThreshold = 10.0;
 const float sec21TurnEndThreshold = 7.0;
 const float sec54TurnEndThreshold = 10.0;
 const float sec52TurnEndThreshold = 11.0;
@@ -921,7 +927,7 @@ void ProcessStraightSection
 {
 
     // Since we are in a straight section, there will only be small corrections leading up to
-    // the turn in the next section, so we start looking for the turn here. Note if the turn 
+    // the turn in the next section, so we start looking for the turn here. Note if the turn
     // threshold is set too small, a turn could be prematurely detected.
     if (nextSectionTurn == right)
     {
@@ -940,7 +946,7 @@ void ProcessStraightSection
         fastSideSpeed = postSprintFastSideSpeed;
         slowSideSpeed = postSprintSlowSideSpeed;
 
-        // set the left or right sensor delay. This is to extend the correction that leads us into the 
+        // set the left or right sensor delay. This is to extend the correction that leads us into the
         // turn following this straight section. Most of the time, this delay will be zero, but for
         // tougher turns, we add some delay
         if (nextSectionTurn == right)
@@ -955,7 +961,7 @@ void ProcessStraightSection
     else
     {
         // Still in sprint window. No sensor delay here because as long as we set the spring time right,
-        // we will never be entering a turn during this period, and adding a delay would cause us to 
+        // we will never be entering a turn during this period, and adding a delay would cause us to
         // zig-zag across the straight section.
         fastSideSpeed = sprintFastSideSpeed;
         slowSideSpeed = sprintSlowSideSpeed;
@@ -1397,7 +1403,7 @@ void setup()
     leftSensorDelay = 0;
     rightSensorDelay = 0;
 
-    
+
     //
     // Read the button. If the button is pressed, set the mode to modeTest.
     // if not pressed, set the mode to modeStandby. The test mode puts the
@@ -1468,7 +1474,7 @@ void loop()
             // zero so this code just gets executed once.
             if (leftSensorDelay > 0)
             {
-                sharpTurnTimer.Start(leftSensorDelay);      
+                sharpTurnTimer.Start(leftSensorDelay);
                 leftSensorDelay = 0; // Consume the flag for one time operation
             }
         }
@@ -1730,7 +1736,7 @@ void loop()
         {
             if (turnTimer.Test())
             {
-              
+
 #ifdef DEBUGTURNTRACK
                 if (prevTurnTrackState != turnTrackState)
                 {
@@ -1947,7 +1953,7 @@ void loop()
 
             case 22:
 
-                thresholdRightDark = sec22ThresholdRightDark; //prevent false black detect at top of ramp 
+                thresholdRightDark = sec22ThresholdRightDark; //prevent false black detect at top of ramp
                 turnStartThreshold = sec31TurnStartThreshold;
                 turnEndThreshold = normalTurnEndThreshold;
                 ProcessStraightSection  //straight section to turn at top of ramp. End at start of turn.
@@ -1963,7 +1969,7 @@ void loop()
                 break;
 
             case 31:
-                thresholdRightDark = normalThresholdRightDark; //return to normal sensor sensitivity 
+                thresholdRightDark = normalThresholdRightDark; //return to normal sensor sensitivity
                 ProcessTurnSection  //right turn onto down ramp. track turn until it ends
                 (
                     sec31FastSideSpeed,
@@ -2088,80 +2094,6 @@ void loop()
                 }
 
                 break;
-            /*
-                Too many short straight sections, so I am making this turn include everything up to the next
-                crosswalk and not trying to detect any turn ends.
-
-                ProcessTurnSection  //Right turn toward figure 8. Track the turn until it ends.
-                (
-                    sec52FastSideSpeed,
-                    sec52SlowSideSpeed,
-                    53,
-                    sec53SprintTime,
-                    sec53LeftRightBias
-                );
-                turnStartThreshold = normalTurnStartThreshold;
-                turnEndThreshold = normalTurnEndThreshold;
-
-                break;
-
-                case 53:
-                turnStartThreshold = sec54TurnStartThreshold;
-                turnEndThreshold = sec54TurnEndThreshold;
-                ProcessStraightSection  //Short straight section before a right dogleg. Ends whe the dogleg starts.
-                (
-                    sec53FastSideSpeed1,
-                    sec53SlowSideSpeed1,
-                    sec53FastSideSpeed2,
-                    sec53SlowSideSpeed2,
-                    54,
-                    right,
-                    0
-                );
-                break;
-
-                case 54:
-                ProcessTurnSection  //Right dogleg in figure 8. Ends when turn finishes.
-                (
-                    sec54FastSideSpeed,
-                    sec54SlowSideSpeed,
-                    55,
-                    sec55SprintTime,
-                    sec55LeftRightBias
-                );
-                turnStartThreshold = normalTurnStartThreshold;
-                turnEndThreshold = normalTurnEndThreshold;
-
-                break;
-                case 55:
-
-                // run at sprint speed during the sprint time. We want to slow down just before the crosswalk so
-                // we have time to stop before running into the road.
-                if (sprintTimer.Test())
-                {
-                    fastSideSpeed = sec55FastSideSpeed1;
-                    slowSideSpeed = sec55SlowSideSpeed1;
-                }
-                else
-                {
-                    fastSideSpeed = sec55FastSideSpeed2;
-                    slowSideSpeed = sec55SlowSideSpeed2;
-                }
-
-                // This section ends at the end of the crosswalk pause, which we detect
-                // by testing the finishingCrosswalk flag, which is set just as the pause finishes.
-                // This section is followed by the rest of this straight part, so we set up section
-                // 61 as a straight section.
-
-                if (finishingCrosswalk)
-                {
-                    finishingCrosswalk = false; //consume the flag
-                    courseSection = 61;
-                    sprintTimer.Start(sec61SprintTime);
-                    leftRightBias = sec61LeftRightBias;
-                }
-                break;
-            */
 
 
             case 61:
@@ -2175,6 +2107,7 @@ void loop()
                     left,
                     sec61TurnDelay
                 );
+                * /
                 break;
 
             case 62:
@@ -2423,7 +2356,7 @@ void loop()
             // road edge detected. Turn toward the center of the road
             inCorrection = right;
         }
-        /*s
+        /*  s
             Not sure this code ever executed
             else if (lineSensorValRight == dark && lineSensorValMiddle == dark)
             {
@@ -2463,12 +2396,12 @@ void loop()
             // just go straight
             SetSpeedRight(fastSideSpeed);
             SetSpeedLeft(fastSideSpeed);
-           
+
         }
-            Serial.print(LFMotorSpeed);
-            Serial.print(" ");
-            Serial.println(RFMotorSpeed);
- 
+        Serial.print(LFMotorSpeed);
+        Serial.print(" ");
+        Serial.println(RFMotorSpeed);
+
         /*
                 ****************************Line counting and crosswalk detection***************************
 
@@ -2627,7 +2560,7 @@ void loop()
         //
         // code for test mode
         //
-        
+
 #ifdef TESTLINESENSORS
         /*
                 Code for finding analog thresholds of line sensors. The hardware thresholds on the sensors are
@@ -2670,27 +2603,27 @@ void loop()
 #endif
 
 #ifdef TESTREALTIMECLOCK
-               if (rtcTestTimer.Test())
-               {
-                   rtcTestTimer.Start(5000); // set timer to 5 seconds
-                   char daysOfTheWeek[7][12] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
-                   //Serial.println("Real Time Clock check...");
-                   DateTime now = realTimeClock.now();
-                   Serial.print(now.year(), DEC);
-                   Serial.print('/');
-                   Serial.print(now.month(), DEC);
-                   Serial.print('/');
-                   Serial.print(now.day(), DEC);
-                   Serial.print(" (");
-                   Serial.print(daysOfTheWeek[now.dayOfTheWeek()]);
-                   Serial.print(") ");
-                   Serial.print(now.hour(), DEC);
-                   Serial.print(':');
-                   Serial.print(now.minute(), DEC);
-                   Serial.print(':');
-                   Serial.print(now.second(), DEC);
-                   Serial.println();
-            }
+        if (rtcTestTimer.Test())
+        {
+            rtcTestTimer.Start(5000); // set timer to 5 seconds
+            char daysOfTheWeek[7][12] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
+            //Serial.println("Real Time Clock check...");
+            DateTime now = realTimeClock.now();
+            Serial.print(now.year(), DEC);
+            Serial.print('/');
+            Serial.print(now.month(), DEC);
+            Serial.print('/');
+            Serial.print(now.day(), DEC);
+            Serial.print(" (");
+            Serial.print(daysOfTheWeek[now.dayOfTheWeek()]);
+            Serial.print(") ");
+            Serial.print(now.hour(), DEC);
+            Serial.print(':');
+            Serial.print(now.minute(), DEC);
+            Serial.print(':');
+            Serial.print(now.second(), DEC);
+            Serial.println();
+        }
 #endif
 
 #ifdef TESTIMU
@@ -2702,12 +2635,12 @@ void loop()
                 displacement. This will drift over time due to cumulative rounding error, but we
                 will try it out and see how well it works.
         */
-        
-            // sample the gyro every imuTimeStep milliseconds
-            //
 
-            //if (imuGyroTimer.Test()) // check if timer has reached its limit
-            {
+        // sample the gyro every imuTimeStep milliseconds
+        //
+
+        //if (imuGyroTimer.Test()) // check if timer has reached its limit
+        {
             //mpu6050 sensor events. We only care about the gyro, but the library only supports reading all of them.
             sensors_event_t accelerationsXYZ,  rotationRatesXYZ,  temperature;
             imu.getEvent  (&accelerationsXYZ, &rotationRatesXYZ, &temperature); // get the acceleration, rotation and temperature values
@@ -2731,25 +2664,25 @@ void loop()
             Serial.println(yTilt);
 
             // imuGyroTimer.Start(imuTimeStep); // start timer with time step delay
-            }
+        }
 #endif
 
 #ifdef TEST7SEGDISPLAY
-            /*
-                Test seven segment display. DisplayCount is called every cycle, but the
-                number to display is changed every second or so. Note DisplayCount has its
-                own timer for its refresh rate, so a lot of times when it is called, it does
-                nothing but maintain the current display state.
+        /*
+            Test seven segment display. DisplayCount is called every cycle, but the
+            number to display is changed every second or so. Note DisplayCount has its
+            own timer for its refresh rate, so a lot of times when it is called, it does
+            nothing but maintain the current display state.
         */
-        
-            static int count = 0;
-            DisplayCount(count);
-            if (testTimer.Test())
-            {
-                testTimer.Start(1000);
-                count++;
-            }
-        
+
+        static int count = 0;
+        DisplayCount(count);
+        if (testTimer.Test())
+        {
+            testTimer.Start(1000);
+            count++;
+        }
+
 #endif
 
     }  // end of test mode code
