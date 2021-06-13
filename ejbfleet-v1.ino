@@ -294,7 +294,7 @@
      for detection the bank before we advance to 82. This part really does not work well. Also, we are overrunning
      that turn and finishing outside of the lines.
 
-     6/8/2021
+     6/8/2021 2am
 
      Implemented changes described above.
 
@@ -321,7 +321,12 @@
      After all of this, I figured out 21 was not going to 22 because it was getting into turnTrackState==idle,
      which does not look for the turn to end, so it never does. I fixed that in the 15 to 21 code and it seems
      to be working fine now. Track testing will tell.
+     
+     6/8/2021 3:15 pm
 
+     Track testing:
+
+     Put sprint times back to their regular delays.
 
 */
 
@@ -398,7 +403,7 @@ const int seekingSecondLineTimeWindow = 300;
 const int seekFirstLineBlockTime = 500;
 
 //line sensor blank time for skipForWiggle timer.
-const int skipForWiggleDelay = 100;
+const int skipForWiggleDelay = 300;
 
 // amount of time to stay in pause mode
 const int pauseModeDuration = 3000;  // 3 seconds
@@ -440,9 +445,9 @@ int prevCourseSection; //For tracking courseSection during debug
 // a straight run. After that time, we run with *FastSideSpeed2 and *SlowSideSpeed2 until an
 // event moves us to the next track subsection, which is either at a turn or at a crosswalk.
 // Too long a sprint time may cause a turn to be
-int initialCourseSection = 0;    //74; // for debugging starting later in the course
-int initialCrossLineCount = 0;   //12;
-int initialDoubleLineCount = 0;  //3;
+int initialCourseSection = 0; //42   //74; // for debugging starting later in the course
+int initialCrossLineCount = 0;//2;   //12;
+int initialDoubleLineCount = 0;//1;  //3;
 
 // turn thresholds are the total value of the sum of rotation values we count per time slot to
 // define entering and exiting a turn. This number will go up with the size of the time interval.
@@ -458,7 +463,7 @@ const int sec11FastSideSpeed1 = 240;
 const int sec11SlowSideSpeed1 = 140;    // gentle correction
 const int sec11FastSideSpeed2 = 100;   // post sprint speed
 const int sec11SlowSideSpeed2 = -200;    // Post sprint correction speed
-const int sec11SprintTime = 5000;//2000;     // duration of sprint time before starting turn
+const int sec11SprintTime = 2000;     // duration of sprint time before starting turn
 const int sec11LeftRightBias = 0;
 const int sec11TurnDelay = 150;
 
@@ -471,7 +476,7 @@ const int sec13FastSideSpeed1  = 130;  // speed for short sprint between right t
 const int sec13SlowSideSpeed1 = -130;    // gentle correction
 const int sec13FastSideSpeed2 = 100;   // post sprint speed
 const int sec13SlowSideSpeed2 = -150;    // Post sprint correction speed
-const int sec13SprintTime = 5000;//50;      // duration of sprint before second turn
+const int sec13SprintTime = 50;      // duration of sprint before second turn
 const int sec13LeftRightBias = 0;
 
 // second turn (right)
@@ -494,7 +499,7 @@ const int sec22FastSideSpeed1 = 200;   // speed up the ramp
 const int sec22SlowSideSpeed1 = 50;    // gentle correction
 const int sec22FastSideSpeed2 = 100;   // post sprint speed
 const int sec22SlowSideSpeed2 = -150;    // Post sprint correction speed
-const int sec22SprintTime = 5000;//1800;      // duration of sprint time before ramp turn
+const int sec22SprintTime = 2000;      // duration of sprint time before ramp turn
 const int sec22LeftRightBias = 0;     // stay to right to avoid premature right turn
 const int sec22TurnDelay = 0;
 const int sec22ThresholdRightDark = 800;
@@ -512,9 +517,9 @@ const int sec32FastSideSpeed1 = 200;  // speed down the ramp
 const int sec32SlowSideSpeed1 = 50;    // gentle correction
 const int sec32FastSideSpeed2 = 100;   // post sprint speed
 const int sec32SlowSideSpeed2 = -200;    // Post sprint correction speed
-const int sec32SprintTime = 1000;     // duration of sprint time before turn at bottom
+const int sec32SprintTime = 1200;     // duration of sprint time before turn at bottom
 const int sec32LeftRightBias = 0;    // stay to right to avoid premature right turn
-const int sec32TurnDelay = 200;
+const int sec32TurnDelay = 150;
 
 // courseSection 4 constants (turn onto tunnel approach, through tunnel to first crosswalk
 const int sec41FastSideSpeed = 100;  // first turn at bottom of ramp right 90 degrees
@@ -523,10 +528,11 @@ const int sec41SlowSideSpeed = -150;
 //Straight section to tunnel approach turn (right). End at start of turn.
 const int sec42FastSideSpeed1 = 130;  // short sprint after turn
 const int sec42SlowSideSpeed1 = -130;   // gentle correction
-const int sec42FastSideSpeed2 = 80;   // post sprint speed
-const int sec42SlowSideSpeed2 = -130;    // Post sprint correction speed
-const int sec42SprintTime = 300;
+const int sec42FastSideSpeed2 = 100;   // post sprint speed
+const int sec42SlowSideSpeed2 = -150;    // Post sprint correction speed
+const int sec42SprintTime = 100;
 const int sec42LeftRightBias = 0;
+const int sec42TurnDelay = 100;
 
 //wide right turn into tunnel. track turn until it ends
 const float sec43TurnStartThreshold = 13.0;
@@ -534,8 +540,8 @@ const int sec43FastSideSpeed = 180;  // tunnel approach curve right 180 degrees
 const int sec43SlowSideSpeed = 50;
 
 //straight section to crosswalk
-const int sec44FastSideSpeed1 = 180;  // short sprint to first crosswalk
-const int sec44SlowSideSpeed1 = 50;   // gentle correction
+const int sec44FastSideSpeed1 = 160;  // short sprint to first crosswalk
+const int sec44SlowSideSpeed1 = -100;   // gentle correction
 const int sec44FastSideSpeed2 = 100;   // post sprint speed
 const int sec44SlowSideSpeed2 = -150;    // Post sprint correction speed
 const int sec44SprintTime = 1000;
@@ -556,11 +562,11 @@ const int sec52FastSideSpeed = 100;  // first turn right 90 degrees
 const int sec52SlowSideSpeed = -150;
 
 // Straight section to first left turn in bottom of figure 8
-const int sec61FastSideSpeed1 = 220;  // sprint to first turn
-const int sec61SlowSideSpeed1 = 50;   // gentle correction
+const int sec61FastSideSpeed1 = 100;  // sprint to first turn
+const int sec61SlowSideSpeed1 = 100;   // gentle correction
 const int sec61FastSideSpeed2 = 80;   // post sprint speed
-const int sec61SlowSideSpeed2 = -150;    // Post sprint correction speed
-const int sec61SprintTime = 100;
+const int sec61SlowSideSpeed2 = -80;    // Post sprint correction speed
+const int sec61SprintTime = 500;
 const int sec61LeftRightBias = 0;
 const int sec61TurnDelay = 150;
 
@@ -2055,7 +2061,7 @@ void loop()
                     sec42SlowSideSpeed2,
                     43,
                     right,
-                    0
+                    sec42TurnDelay
                 );
                 break;
 
