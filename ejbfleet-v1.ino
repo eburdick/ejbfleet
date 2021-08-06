@@ -328,6 +328,11 @@
 
      Put sprint times back to their regular delays.
 
+     8/6/2021 3:50 pm
+
+     Project is over. The track is dismantled in the basement. This code might end up being a good base for other
+     projects or for education purposes.
+
 */
 
 //conditional compilation flags for test mode. Note test stuff only happens when the button
